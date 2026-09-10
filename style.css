@@ -1,0 +1,91 @@
+/* Theme-Agnostic Typography and Layout */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif !important;
+}
+
+/* --- PREMIUM SIDEBAR STYLING --- */
+[data-testid="stSidebar"] {
+    border-right: 1px solid rgba(128, 128, 128, 0.2) !important;
+    box-shadow: 2px 0 10px rgba(0,0,0,0.02);
+}
+.stRadio > label {
+    font-weight: 700 !important;
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 1px;
+    margin-bottom: 10px;
+}
+
+/* Navigation Pills (Adapts to Light/Dark Mode) */
+div[role="radiogroup"] > label {
+    padding: 10px 15px;
+    border-radius: 10px;
+    transition: all 0.2s;
+    margin-bottom: 5px;
+    background-color: rgba(128, 128, 128, 0.05);
+}
+div[role="radiogroup"] > label:hover {
+    background-color: rgba(128, 128, 128, 0.15);
+}
+
+/* Dynamic Island Alert (Corporate Slate - Visible in both modes) */
+.dynamic-island {
+    background: #2C3E50;
+    color: #FFFFFF;
+    padding: 12px 24px;
+    border-radius: 40px;
+    text-align: center;
+    font-weight: 600;
+    font-size: 14px;
+    margin: 0 auto 20px auto;
+    width: fit-content;
+    max-width: 90%;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    animation: dropDown 0.5s ease-out;
+    position: relative;
+    z-index: 9999;
+}
+
+@keyframes dropDown {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+/* Frosted Glass Cards (Theme Adaptive) */
+.stMetric, .stExpander { 
+    background: rgba(128, 128, 128, 0.05) !important;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-radius: 20px !important; 
+    border: 1px solid rgba(128, 128, 128, 0.1) !important;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.04);
+    transition: all 0.3s ease;
+}
+
+/* Button Styling */
+.stButton > button {
+    border-radius: 14px !important;
+    font-weight: 600 !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    transition: all 0.2s ease;
+}
+.stButton > button:active { 
+    transform: scale(0.96); 
+}
+
+/* --- MOBILE RESPONSIVE RULES --- */
+@media (max-width: 768px) {
+    .dynamic-island {
+        font-size: 12px;
+        padding: 10px 16px;
+        width: 85%;
+    }
+    .stMetric, .stExpander { 
+        padding: 12px !important; 
+        border-radius: 14px !important; 
+    }
+    h1 { font-size: 24px !important; }
+    h3 { font-size: 18px !important; }
+}

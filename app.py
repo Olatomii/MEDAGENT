@@ -3,31 +3,37 @@ import pandas as pd
 import streamlit as st
 import random
 import datetime
-import plotly.express as px
 
-# --- 1. DATABASE SETUP ---
-DB_NAME = 'medagent.db'
-MAX_QUEUE = 3  
+# --- 1. DATABASE SETUP & THREAD SAFETY ---
+DB_NAME = 'medagent_enterprise.db'
+
+def get_db_connection():
+    # check_same_thread=False prevents crashes when deployed to cloud servers
+    return sqlite3.connect(DB_NAME, check_same_thread=False)
 
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS doctors
                  (doc_id INTEGER PRIMARY KEY, name TEXT, specialty TEXT)''')
+    
     c.execute('''CREATE TABLE IF NOT EXISTS appointments
-                 (booking_date TEXT, doc_id INTEGER, patient_name TEXT, triage_level INTEGER, 
-                  status TEXT, added_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS waitlist
-                 (target_date TEXT, patient_id INTEGER, patient_name TEXT, specialty TEXT, 
-                  triage_level INTEGER, added_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-
+                 (booking_date TEXT, doc_id INTEGER, patient_name TEXT, age INTEGER, gender TEXT, 
+                  address TEXT, occupation TEXT, payment_status TEXT, triage_level INTEGER, 
+                  status TEXT, location TEXT, queue_number TEXT, notes TEXT, 
+                  added_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    
     c.execute("SELECT COUNT(*) FROM doctors")
-    if c.fetchone()[0] < 6:
+    if c.fetchone()[0] < 21:
         c.execute("DELETE FROM doctors")
         docs = [
-            (1, "Dr. Smith", "Cardiology"), (2, "Dr. Taylor", "Cardiology"),
-            (3, "Dr. Jones", "Orthopedics"), (4, "Dr. Brown", "Orthopedics"),
-            (5, "Dr. Adams", "General Practice"), (6, "Dr. Clark", "General Practice")
+            (1, "Dr. Smith", "General"), (2, "Dr. Taylor", "General"), (3, "Dr. Williams", "General"),
+            (4, "Dr. Jones", "Cardiology"), (5, "Dr. Davis", "Cardiology"), (6, "Dr. Miller", "Cardiology"),
+            (7, "Dr. Brown", "Neurology"), (8, "Dr. Wilson", "Neurology"), (9, "Dr. Moore", "Neurology"),
+            (10, "Dr. Adams", "Gynecology"), (11, "Dr. King", "Gynecology"), (12, "Dr. Wright", "Gynecology"),
+            (13, "Dr. Clark", "General Surgery"), (14, "Dr. Hill", "General Surgery"), (15, "Dr. Scott", "General Surgery"),
+            (16, "Dr. White", "Nephrology"), (17, "Dr. Green", "Nephrology"), (18, "Dr. Baker", "Nephrology"),
+            (19, "Dr. Evans", "Emergency / Trauma"), (20, "Dr. Carter", "Emergency / Trauma"), (21, "Dr. Mitchell", "Emergency / Trauma")
         ]
         c.executemany("INSERT INTO doctors (doc_id, name, specialty) VALUES (?, ?, ?)", docs)
     conn.commit()
@@ -35,379 +41,383 @@ def init_db():
 
 init_db()
 
+
 # --- 2. MULTI-AGENT MODELS ---
-
-class Patient:
-    def __init__(self, patient_id, name, specialty, triage_level, target_date):
-        self.patient_id = patient_id
-        self.name = name
-        self.specialty = specialty
-        self.triage_level = triage_level
-        self.target_date = target_date 
-
-class SchedulingAgent:
+class HospitalAgents:
     def __init__(self):
         if 'logs' not in st.session_state:
             st.session_state.logs = []
+        if 'dynamic_alert' not in st.session_state:
+            st.session_state.dynamic_alert = None
     
-    def log(self, message):
+    def log(self, message, is_critical=False):
         st.session_state.logs.append(message)
+        if is_critical:
+            st.session_state.dynamic_alert = message
 
-    def get_triage_name(self, level):
-        names = {1: "Level 1 (Resuscitation)", 2: "Level 2 (Emergent)", 3: "Level 3 (Urgent)", 4: "Level 4 (Semi-Urgent)", 5: "Level 5 (Routine)"}
-        return names.get(level, "Unknown")
+    def register_patient(self, name, age, gender, address, occ, payment, spec, triage, date):
+        if payment != "Cleared" and triage > 2:
+            self.log(f"[BILLING_AGENT] REJECT: {name} must clear billing before vitals/consultation.", True)
+            return False
 
-    def book_appointment(self, patient, is_vacuum=False):
-        if not is_vacuum:
-            triage_name = self.get_triage_name(patient.triage_level)
-            self.log(f"[PATIENT_AGENT_{patient.patient_id}] -> ADMISSION REQUEST: {{Specialty: {patient.specialty}, Date: {patient.target_date}, {triage_name}}}")
-        
-        conn = sqlite3.connect(DB_NAME)
+        if triage in [1, 2]:
+            spec = "Emergency / Trauma"
+            self.log(f"[TRIAGE_AGENT] [ALERT] Level {triage} Emergency. {name} autonomously routed to Emergency Unit.", True)
+
+        conn = get_db_connection()
         c = conn.cursor()
+        c.execute("SELECT doc_id, name FROM doctors WHERE specialty=?", (spec,))
+        docs = c.fetchall()
         
-        c.execute("SELECT doc_id, name FROM doctors WHERE specialty=?", (patient.specialty,))
-        raw_matching_docs = c.fetchall()
-        
-        if not raw_matching_docs:
-            self.log(f"[TRIAGE_SYSTEM] -> REJECT: {{No attending physicians found for {patient.specialty}}}")
+        if not docs:
             conn.close()
             return False
 
-        # --- DYNAMIC LOAD BALANCING ---
-        # Sort doctors by their current active patient load to distribute admissions evenly
         doc_loads = []
-        for doc_id, doc_name in raw_matching_docs:
-            c.execute("SELECT COUNT(*) FROM appointments WHERE doc_id=? AND booking_date=? AND status != 'COMPLETED'", (doc_id, patient.target_date))
+        for doc_id, doc_name in docs:
+            c.execute("SELECT COUNT(*) FROM appointments WHERE doc_id=? AND booking_date<=? AND status NOT IN ('COMPLETED', 'ABSENT', 'ADMITTED')", (doc_id, date))
             count = c.fetchone()[0]
             doc_loads.append((count, doc_id, doc_name))
-        
+            
         doc_loads.sort(key=lambda x: x[0])
-        matching_docs = [(d[1], d[2]) for d in doc_loads]
+        best_doc_id = doc_loads[0][1]
+        best_doc_name = doc_loads[0][2]
 
-        # --- IMMEDIATE CONSULTATION & INTERRUPTION (Levels 1 & 2 ONLY) ---
-        if patient.triage_level in [1, 2]:
-            idle_doc = None
-            # 1. Attempt to find a physician not currently in consultation
-            for doc_id, doc_name in matching_docs:
-                c.execute("SELECT status FROM appointments WHERE doc_id=? AND booking_date=? AND status='IN_CONSULTATION'", (doc_id, patient.target_date))
-                if not c.fetchone():
-                    idle_doc = (doc_id, doc_name)
-                    break
-            
-            if idle_doc:
-                doc_id, doc_name = idle_doc
-                c.execute("INSERT INTO appointments (booking_date, doc_id, patient_name, triage_level, status) VALUES (?, ?, ?, ?, 'IN_CONSULTATION')",
-                          (patient.target_date, doc_id, patient.name, patient.triage_level))
-                conn.commit()
-                self.log(f"[TRIAGE_SYSTEM] -> ACTION: {{Direct routing to {doc_name} for immediate clinical assessment}}")
-                conn.close()
-                return True
-
-            # 2. If no physicians are idle, initiate active hijack of a lower-priority case
-            hijack_candidate = None
-            for doc_id, doc_name in matching_docs:
-                c.execute("SELECT rowid, patient_name, triage_level FROM appointments WHERE doc_id=? AND booking_date=? AND status='IN_CONSULTATION'", (doc_id, patient.target_date))
-                active_pt = c.fetchone()
-                if active_pt:
-                    b_rowid, b_p_name, b_t_level = active_pt
-                    if b_t_level > patient.triage_level:
-                        hijack_candidate = (doc_id, doc_name, b_rowid, b_p_name, b_t_level)
-                        break 
-
-            if hijack_candidate:
-                doc_id, doc_name, b_rowid, b_p_name, b_t_level = hijack_candidate
-                self.log(f"[CRITICAL_OVERRIDE] {patient.name} (L{patient.triage_level}) interrupting {doc_name}'s active consult with {b_p_name} (L{b_t_level})")
-                c.execute("UPDATE appointments SET patient_name=?, triage_level=? WHERE rowid=?", (patient.name, patient.triage_level, b_rowid))
-                conn.commit()
-                self.log(f"[TRIAGE_SYSTEM] -> ACTION: {{Re-triaging displaced patient: {b_p_name}}}")
-                bumped_patient = Patient(9999, b_p_name, patient.specialty, b_t_level, patient.target_date)
-                conn.close() 
-                self.book_appointment(bumped_patient)
-                return True
-            else:
-                # 3. Saturated Trauma Protocol (Level 1 Rejection)
-                if patient.triage_level == 1:
-                    self.log(f"[CODE_BLUE_ALERT] All {patient.specialty} physicians are saturated with Resuscitation cases. Initiating immediate external hospital transfer for {patient.name}.")
-                    conn.close()
-                    return False
-
-        # --- STANDARD QUEUE ADMISSION ---
-        for doc_id, doc_name in matching_docs:
-            c.execute("SELECT status FROM appointments WHERE doc_id=? AND booking_date=? AND status != 'COMPLETED'", (doc_id, patient.target_date))
-            active_statuses = [row[0] for row in c.fetchall()]
-            
-            if len(active_statuses) < MAX_QUEUE:
-                new_status = 'WAITING' if 'IN_CONSULTATION' in active_statuses else 'IN_CONSULTATION'
-                c.execute("INSERT INTO appointments (booking_date, doc_id, patient_name, triage_level, status) VALUES (?, ?, ?, ?, ?)",
-                          (patient.target_date, doc_id, patient.name, patient.triage_level, new_status))
-                conn.commit()
-                self.log(f"[TRIAGE_SYSTEM] -> PROPOSE: {{Admitted {patient.name} to {doc_name}'s queue as {new_status}}}")
-                conn.close()
-                return True
+        q_num = f"Q-{random.randint(1000, 9999)}"
+        loc = "Doctor Wait" if triage == 1 else "Nurses Station"
         
-        # --- WAITLIST TRIAGE OVERRIDE ---
-        bump_candidate = None
-        highest_triage_num = patient.triage_level
-        
-        for doc_id, doc_name in matching_docs:
-            c.execute("SELECT rowid, patient_name, triage_level FROM appointments WHERE doc_id=? AND booking_date=? AND status='WAITING'", (doc_id, patient.target_date))
-            waiters = c.fetchall()
-            for rowid, p_name, t_level in waiters:
-                if t_level > highest_triage_num: 
-                    highest_triage_num = t_level
-                    bump_candidate = (doc_id, doc_name, rowid, p_name, t_level)
-        
-        if bump_candidate:
-            b_doc_id, b_doc_name, b_rowid, b_p_name, b_t_level = bump_candidate
-            self.log(f"[TRIAGE_SYSTEM] -> PROPOSE: {{Displacing {b_p_name} (L{b_t_level}) from waiting area for {patient.name} (L{patient.triage_level})}}")
-            c.execute("UPDATE appointments SET patient_name=?, triage_level=? WHERE rowid=?", (patient.name, patient.triage_level, b_rowid))
-            conn.commit()
-            self.log(f"[PHYSICIAN_AGENT_{b_doc_name.replace(' ', '_').upper()}] -> ACCEPT: {{Override Successful}}")
-            self.log(f"[TRIAGE_SYSTEM] -> ACTION: {{Re-triaging displaced patient: {b_p_name}}}")
-            bumped_patient = Patient(9999, b_p_name, patient.specialty, b_t_level, patient.target_date)
-            conn.close() 
-            self.book_appointment(bumped_patient)
-            return True
-
-        # --- FALLBACK TO PENDING WAITLIST ---
-        self.log(f"[TRIAGE_SYSTEM] -> REJECT: {{Clinical capacity exceeded for {patient.specialty}. {patient.name} registered to priority waitlist.}}")
-        c.execute("INSERT INTO waitlist (target_date, patient_id, patient_name, specialty, triage_level) VALUES (?, ?, ?, ?, ?)",
-                  (patient.target_date, patient.patient_id, patient.name, patient.specialty, patient.triage_level))
+        c.execute("INSERT INTO appointments (booking_date, doc_id, patient_name, age, gender, address, occupation, payment_status, triage_level, status, location, queue_number, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'WAITING', ?, ?, '')",
+                  (date, best_doc_id, name, age, gender, address, occ, payment, triage, loc, q_num))
         conn.commit()
-            
+        self.log(f"[ROUTING_AGENT] {name} registered ({q_num}). Assigned to {best_doc_name} (Load: {doc_loads[0][0]} pts). Routed to {loc}.")
         conn.close()
-        return False
-    
-    def vacuum_waitlist(self, specialty, target_date):
-        conn = sqlite3.connect(DB_NAME)
+        return True
+
+    def process_vitals(self, rowid, name, bp_sys, temp, hr, spo2, rr):
+        conn = get_db_connection()
         c = conn.cursor()
-        c.execute("SELECT patient_id, patient_name, triage_level FROM waitlist WHERE target_date=? AND specialty=? ORDER BY triage_level ASC, added_time ASC LIMIT 1", (target_date, specialty))
-        res = c.fetchone()
-        
-        if res:
-            pid, pname, tlvl = res
-            self.log(f"[AUTOMATED_TRIAGE] Clinical capacity detected. Admitting {pname} (L{tlvl}) from Waitlist into Active Queue.")
-            c.execute("DELETE FROM waitlist WHERE patient_id=? AND target_date=?", (pid, target_date))
-            conn.commit()
-            conn.close()
-            pulled_patient = Patient(pid, pname, specialty, tlvl, target_date)
-            self.book_appointment(pulled_patient, is_vacuum=True)
+        if bp_sys > 180 or temp > 39.0 or hr > 120 or spo2 < 92 or rr > 24:
+            new_note = f"[VITALS]: BP {bp_sys}, HR {hr}, SpO2 {spo2}% [CRITICAL]"
+            c.execute("UPDATE appointments SET triage_level=2, location='Doctor Wait', notes = notes || ? WHERE rowid=?", (new_note, rowid))
+            self.log(f"[CLINICAL_PREP] [CRITICAL] Vitals for {name} indicate distress. Autonomously upgraded to Level 2.", True)
         else:
-            conn.close()
-
-    def complete_consultation(self, doc_id, doc_name, specialty, target_date):
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("UPDATE appointments SET status='COMPLETED' WHERE doc_id=? AND booking_date=? AND status='IN_CONSULTATION'", (doc_id, target_date))
-        c.execute("SELECT rowid FROM appointments WHERE doc_id=? AND booking_date=? AND status='WAITING' ORDER BY triage_level ASC, added_time ASC LIMIT 1", (doc_id, target_date))
-        nxt = c.fetchone()
-        if nxt:
-            c.execute("UPDATE appointments SET status='IN_CONSULTATION' WHERE rowid=?", (nxt[0],))
+            new_note = f"[VITALS]: BP {bp_sys}, HR {hr}, SpO2 {spo2}%"
+            c.execute("UPDATE appointments SET location='Doctor Wait', notes = notes || ? WHERE rowid=?", (new_note, rowid))
+            self.log(f"[CLINICAL_PREP] Vitals logged for {name}. Patient routed to Doctor's Queue.")
         conn.commit()
         conn.close()
-        
-        self.log(f"[PHYSICIAN_AGENT_{doc_name.replace(' ', '_').upper()}] -> INFORM: {{Consultation discharged. Available for next admission.}}")
-        self.vacuum_waitlist(specialty, target_date)
 
-    def process_eod_waitlist(self, current_date_str):
-        self.log(f"[ROLLOVER_PROTOCOL] Initiating End-of-Shift processing for {current_date_str}...")
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("SELECT patient_id, patient_name, specialty, triage_level FROM waitlist WHERE target_date=? ORDER BY triage_level ASC", (current_date_str,))
-        patients = c.fetchall()
-        
-        if not patients:
-            self.log(f"[ROLLOVER_PROTOCOL] No pending admissions found for {current_date_str}.")
-            conn.close()
-            return
+    def admit_to_ward(self, rowid, name, age, gender):
+        if age < 18:
+            ward = "Children's Ward"
+        elif gender == "Male":
+            ward = "Male Ward"
+        else:
+            ward = "Female Ward"
             
-        c.execute("DELETE FROM waitlist WHERE target_date=?", (current_date_str,))
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("UPDATE appointments SET location=?, status='ADMITTED' WHERE rowid=?", (ward, rowid))
         conn.commit()
         conn.close()
+        self.log(f"[BED_ALLOCATION] {name} processed. Bed locked in {ward}.", True)
         
-        current_date_obj = datetime.datetime.strptime(current_date_str, "%Y-%m-%d").date()
-        next_date_str = (current_date_obj + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-        
-        for pid, p_name, spec, t_lvl in patients:
-            self.log(f"[ROLLOVER_PROTOCOL] Systematically migrating {p_name} (L{t_lvl}) to {next_date_str}")
-            rolled_over = Patient(pid, p_name, spec, t_lvl, next_date_str)
-            self.book_appointment(rolled_over)
+    def discharge_from_ward(self, rowid, name, ward):
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("UPDATE appointments SET location='Discharged', status='COMPLETED' WHERE rowid=?", (rowid,))
+        conn.commit()
+        conn.close()
+        self.log(f"[BED_ALLOCATION] {name} has been medically cleared and discharged. Bed released in {ward}.")
+
+    def send_to_lab(self, rowid, name, directive):
+        conn = get_db_connection()
+        c = conn.cursor()
+        new_note = f" | [LAB RQ]: {directive}"
+        c.execute("UPDATE appointments SET location='Imaging/Lab', notes = notes || ? WHERE rowid=?", (new_note, rowid))
+        conn.commit()
+        conn.close()
+        self.log(f"[DIAGNOSTIC_AGENT] {name} removed from Doctor Queue and routed to Imaging/Lab for {directive}.")
+
+    def upload_lab_results(self, rowid, name):
+        conn = get_db_connection()
+        c = conn.cursor()
+        new_note = " | [LAB]: RESULTS READY"
+        c.execute("UPDATE appointments SET location='Doctor Wait', notes = notes || ?, triage_level=2 WHERE rowid=?", (new_note, rowid))
+        conn.commit()
+        conn.close()
+        self.log(f"[DIAGNOSTIC_AGENT] Results uploaded for {name}. Patient injected to top of Doctor Queue.", True)
+
+    def send_to_pharmacy(self, rowid, name, directive):
+        conn = get_db_connection()
+        c = conn.cursor()
+        new_note = f" | [PHARM RQ]: {directive}"
+        c.execute("UPDATE appointments SET location='Pharmacy', notes = notes || ? WHERE rowid=?", (new_note, rowid))
+        conn.commit()
+        conn.close()
+        self.log(f"[PHARMACY_AGENT] {name} discharged and routed to Pharmacy. Rx: {directive}.")
+
+    def flag_absent(self, rowid, name, location):
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("UPDATE appointments SET status='ABSENT', location='Archived' WHERE rowid=?", (rowid,))
+        conn.commit()
+        conn.close()
+        self.log(f"[EXCEPTION_AGENT] {name} flagged as ABSENT at {location}. Patient removed from active queue to prevent bottleneck.")
 
 
-# --- 3. STREAMLIT UI CONFIGURATION ---
+# --- 3. STREAMLIT GUI (PURE DASHBOARD) ---
+st.set_page_config(page_title="MedAgent Sync", layout="wide")
 
-st.set_page_config(page_title="MedAgent Sync | Enterprise Clinical Engine", layout="wide")
+def load_css():
+    try:
+        with open("style.css") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    except FileNotFoundError:
+        pass
 
-st.markdown("""
-<style>
-    .stMetric { background-color: #ffffff !important; padding: 15px !important; border-radius: 6px !important; border: 1px solid #d1d5db !important; }
-    .stMetric label { color: #4b5563 !important; font-weight: 600 !important; }
-    .stMetric [data-testid="stMetricValue"] { color: #111827 !important; }
-</style>
+load_css()
+agent_sys = HospitalAgents()
+
+if st.session_state.get('dynamic_alert'):
+    st.markdown(f"<div class='dynamic-island'>{st.session_state.dynamic_alert}</div>", unsafe_allow_html=True)
+    st.session_state.dynamic_alert = None
+
+
+# --- SIDEBAR: AGENT NODE SELECTOR ---
+st.sidebar.markdown("""
+    <h2 style='font-weight: 800; color: #007AFF; margin-bottom: 0;'>MedAgent Sync</h2>
+    <p style='color: #8E8E93; font-size: 12px; font-weight: 700; letter-spacing: 1px; margin-top: 0;'>MAS COORDINATION FRAMEWORK</p>
 """, unsafe_allow_html=True)
 
-st.title("MedAgent Sync")
-st.markdown("**Enterprise Multi-Agent Resource Allocation & Dynamic Triage Engine**")
-st.divider()
+st.sidebar.markdown("### System Dashboard")
 
-scheduler = SchedulingAgent()
-
-# Global Metrics
-conn = sqlite3.connect(DB_NAME)
-global_appts = pd.read_sql_query("SELECT * FROM appointments", conn)
-global_waitlist = pd.read_sql_query("SELECT * FROM waitlist", conn)
-docs_count_df = pd.read_sql_query("SELECT COUNT(*) as cnt FROM doctors", conn)
-conn.close()
-
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-kpi1.metric("Active Encounters", len(global_appts[global_appts['status'] != 'COMPLETED']))
-kpi2.metric("Discharged Consultations", len(global_appts[global_appts['status'] == 'COMPLETED']))
-kpi3.metric("Pending Waitlist", len(global_waitlist))
-kpi4.metric("Attending Physicians", int(docs_count_df['cnt'].iloc[0]))
-st.divider()
-
-# Tabbed Interface
-tab_sim, tab_logs, tab_analytics = st.tabs([
-    "Clinical Operations", 
-    "System Telemetry", 
-    "Analytics & Rollover"
+user_role = st.sidebar.radio("View Agent Node:", [
+    "Front Desk (Intake)", 
+    "Nurses Station (Clinical Prep)", 
+    "Physician (Consultation)", 
+    "Inpatient Wards", 
+    "Diagnostics (Imaging/Lab)", 
+    "Pharmacy (Dispensing)", 
+    "System Telemetry"
 ])
 
-with tab_sim:
-    st.subheader("1. Clinical Triage Dispatcher")
-    st.caption("Initiate patient ingress and observe autonomous algorithms dynamically allocate clinical resources.")
-    
-    col_d1, col_d2, col_d3, col_d4 = st.columns([2, 2, 2, 1])
-    with col_d1:
-        target_date = st.date_input("Admission Date", datetime.date.today())
-    with col_d2:
-        triage_choice = st.selectbox("Acuity Level", ["Level 1: Resuscitation", "Level 2: Emergent", "Level 3: Urgent", "Level 4: Semi-Urgent", "Level 5: Routine"], index=4)
-        triage_int = int(triage_choice.split(":")[0][-1])
-    with col_d3:
-        spec = st.selectbox("Target Ward", ["Cardiology", "Orthopedics", "General Practice"])
-    with col_d4:
-        st.write("") 
-        st.write("")
-        btn_type = "primary" if triage_int <= 2 else "secondary"
-        if st.button("Dispatch", use_container_width=True, type=btn_type):
-            pid = random.randint(1000, 9999)
-            new_patient = Patient(pid, f"Patient-{pid}", spec, triage_int, target_date.strftime("%Y-%m-%d"))
-            scheduler.book_appointment(new_patient)
-            st.rerun()
+st.sidebar.divider()
+target_date = st.sidebar.date_input("System Target Date", datetime.date.today()).strftime("%Y-%m-%d")
 
-    st.divider()
-    st.subheader("2. Live Ward Queues & Physician Load Balancing")
+st.title(f"{user_role}")
+
+
+# --- ROLE 1: FRONT DESK ---
+if user_role == "Front Desk (Intake)":
+    with st.form("registration_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        p_name = col1.text_input("Full Name")
+        p_gender = col1.selectbox("Gender", ["Male", "Female"])
+        p_age = col1.number_input("Age", min_value=0, max_value=120, value=30)
+        p_occ = col2.text_input("Occupation")
+        p_address = col2.text_input("Living Address")
+        
+        st.divider()
+        col3, col4 = st.columns(2)
+        with col3:
+            appointment_date = st.date_input("Schedule Appointment Date", datetime.date.today()).strftime("%Y-%m-%d")
+        with col4:
+            spec = st.selectbox("Routing Department", ["General", "Cardiology", "Neurology", "Gynecology", "General Surgery", "Nephrology", "Emergency / Trauma"])
+            
+        triage = st.selectbox("Acuity", ["1: Resuscitation", "2: Emergent", "3: Urgent", "4: Semi-Urgent", "5: Routine"], index=4)
+        payment = st.radio("Billing Status", ["Pending", "Cleared"], horizontal=True)
+        
+        submitted = st.form_submit_button("Route to Agent Network", type="primary")
+        
+        if submitted:
+            if not p_name:
+                st.error("Patient name is required.")
+            else:
+                success = agent_sys.register_patient(p_name, p_age, p_gender, p_address, p_occ, payment, spec, int(triage[0]), appointment_date)
+                if success:
+                    st.toast(f"Patient successfully registered for {appointment_date} and routed to system queue.")
+                else:
+                    st.error("Registration failed. Ensure billing is cleared for non-emergencies.")
+
+
+# --- ROLE 2: NURSES STATION ---
+elif user_role == "Nurses Station (Clinical Prep)":
+    conn = get_db_connection()
+    query = """SELECT a.rowid, a.patient_name, a.queue_number, a.triage_level, d.name as doc_name, d.specialty 
+               FROM appointments a 
+               JOIN doctors d ON a.doc_id = d.doc_id 
+               WHERE a.location='Nurses Station' AND a.booking_date<=?"""
+    vitals_df = pd.read_sql_query(query, conn, params=(target_date,))
+    conn.close()
     
-    conn = sqlite3.connect(DB_NAME)
-    docs_df = pd.read_sql_query("SELECT * FROM doctors", conn)
-    appts_df = pd.read_sql_query("SELECT * FROM appointments WHERE booking_date=?", conn, params=(target_date.strftime("%Y-%m-%d"),))
+    if vitals_df.empty:
+        st.success("Queue is empty. No pending vitals.")
+    else:
+        for _, row in vitals_df.iterrows():
+            with st.expander(f"Patient: {row['patient_name']} ({row['queue_number']}) | L{row['triage_level']} | Routing to: {row['doc_name']} ({row['specialty']})", expanded=True):
+                col1, col2, col3 = st.columns(3)
+                bp = col1.number_input("Systolic BP (mmHg)", min_value=0, max_value=300, value=120, key=f"bp_{row['rowid']}")
+                hr = col2.number_input("Heart Rate (bpm)", min_value=0, max_value=250, value=75, key=f"hr_{row['rowid']}")
+                spo2 = col3.number_input("SpO2 (%)", min_value=0, max_value=100, value=98, key=f"spo2_{row['rowid']}")
+                temp = col1.number_input("Temp (C)", min_value=20.0, max_value=45.0, value=37.0, key=f"temp_{row['rowid']}")
+                rr = col2.number_input("Resp. Rate", min_value=0, max_value=60, value=16, key=f"rr_{row['rowid']}")
+                
+                col_btn1, col_btn2 = st.columns([3, 1])
+                with col_btn1:
+                    if st.button("Log Vitals & Trigger Prep Agent", type="primary", key=f"btn_{row['rowid']}", use_container_width=True):
+                        agent_sys.process_vitals(row['rowid'], row['patient_name'], bp, temp, hr, spo2, rr)
+                        st.rerun()
+                with col_btn2:
+                    if st.button("Mark Absent", key=f"absent_n_{row['rowid']}", use_container_width=True):
+                        agent_sys.flag_absent(row['rowid'], row['patient_name'], "Nurses Station")
+                        st.rerun()
+
+
+# --- ROLE 3: PHYSICIAN ---
+elif user_role == "Physician (Consultation)":
+    assigned_spec = st.selectbox("Select Physician Specialty Queue:", [
+        "General", "Cardiology", "Neurology", 
+        "Gynecology", "General Surgery", "Nephrology", "Emergency / Trauma"
+    ])
+    
+    conn = get_db_connection()
+    query = """SELECT a.rowid, a.patient_name, a.queue_number, a.triage_level, a.age, a.gender, a.notes, 
+                      d.name as doc_name, d.specialty 
+               FROM appointments a 
+               JOIN doctors d ON a.doc_id = d.doc_id 
+               WHERE a.location='Doctor Wait' AND a.booking_date<=? AND d.specialty=?
+               ORDER BY a.triage_level ASC"""
+               
+    doc_df = pd.read_sql_query(query, conn, params=(target_date, assigned_spec))
     conn.close()
 
-    col_queue, col_doc = st.columns([2, 1])
-
-    with col_queue:
-        labels = {1: "[L1 - Resuscitation]", 2: "[L2 - Emergent]", 3: "[L3 - Urgent]", 4: "[L4 - Semi-Urgent]", 5: "[L5 - Routine]"}
-        
-        for _, doc in docs_df.iterrows():
-            doc_appts = appts_df[appts_df['doc_id'] == doc['doc_id']]
-            active = doc_appts[doc_appts['status'] != 'COMPLETED'].sort_values(by=['status', 'triage_level', 'added_time'], ascending=[True, True, True])
-            
-            with st.expander(f"Dr. {doc['name'].split(' ')[1]} ({doc['specialty']}) | Consultations Discharged: {len(doc_appts[doc_appts['status'] == 'COMPLETED'])}", expanded=True):
-                if active.empty:
-                    st.write("Ward clear. Physician is awaiting admissions.")
-                else:
-                    for _, row in active.iterrows():
-                        lbl = labels.get(row['triage_level'], "")
-                        if row['status'] == 'IN_CONSULTATION':
-                            st.success(f"{lbl} {row['patient_name']} - ACTIVE CONSULTATION")
-                        else:
-                            st.info(f"{lbl} {row['patient_name']} - WAITING ROOM")
-
-    with col_doc:
-        st.markdown("#### Clinical Cycle Operations")
-        st.caption("Register consultation discharge. The automated logic will instantly process pending admissions from the priority waitlist.")
-        
-        for _, doc in docs_df.iterrows():
-            if st.button(f"Discharge Dr. {doc['name'].split(' ')[1]}'s Active", key=f"comp_{doc['doc_id']}", use_container_width=True):
-                scheduler.complete_consultation(int(doc['doc_id']), doc['name'], doc['specialty'], target_date.strftime("%Y-%m-%d"))
-                st.rerun()
+    if doc_df.empty:
+        st.info(f"No patients currently waiting in the {assigned_spec} queue.")
+    else:
+        for _, row in doc_df.iterrows():
+            with st.expander(f"Assigned to {row['doc_name']} | {row['patient_name']} [L{row['triage_level']}]", expanded=True):
+                st.caption(f"{row['age']} yr old {row['gender']} | Queue: {row['queue_number']}")
+                st.markdown(f"**Medical Record / Notes:** {row['notes']}")
                 
-        st.divider()
-        if st.button("Purge Clinical Database", use_container_width=True):
-            conn = sqlite3.connect(DB_NAME)
+                doc_notes = st.text_input("Clinical Directives (Rx / Lab Orders):", placeholder="Enter specific medical directives...", key=f"doc_notes_{row['rowid']}")
+                st.write("")
+                
+                col_a, col_b, col_c, col_d = st.columns(4)
+                if col_a.button("Admit to Ward", key=f"admit_{row['rowid']}", use_container_width=True):
+                    agent_sys.admit_to_ward(row['rowid'], row['patient_name'], row['age'], row['gender'])
+                    st.rerun()
+                    
+                if col_b.button("Send to Lab", key=f"lab_{row['rowid']}", use_container_width=True):
+                    directive = doc_notes if doc_notes else "Standard Diagnostics"
+                    agent_sys.send_to_lab(row['rowid'], row['patient_name'], directive)
+                    st.rerun()
+                    
+                if col_c.button("Discharge (Pharm)", type="primary", key=f"pharm_{row['rowid']}", use_container_width=True):
+                    directive = doc_notes if doc_notes else "Standard Dispensing"
+                    agent_sys.send_to_pharmacy(row['rowid'], row['patient_name'], directive)
+                    st.rerun()
+                    
+                if col_d.button("Mark Absent", key=f"absent_d_{row['rowid']}", use_container_width=True):
+                    agent_sys.flag_absent(row['rowid'], row['patient_name'], "Physician Queue")
+                    st.rerun()
+
+
+# --- ROLE 4: INPATIENT WARDS ---
+elif user_role == "Inpatient Wards":
+    conn = get_db_connection()
+    wards_df = pd.read_sql_query("SELECT rowid, patient_name, age, gender, location, queue_number FROM appointments WHERE status='ADMITTED'", conn)
+    conn.close()
+
+    if wards_df.empty:
+        st.info("No patients currently admitted to the wards.")
+    else:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown("#### [WARD] Male")
+            males = wards_df[wards_df['location'] == 'Male Ward']
+            for _, row in males.iterrows():
+                with st.container(border=True):
+                    st.info(f"Bed Assigned: {row['patient_name']} (Age: {row['age']})")
+                    if st.button("Discharge Patient", key=f"d_{row['rowid']}", use_container_width=True):
+                        agent_sys.discharge_from_ward(row['rowid'], row['patient_name'], 'Male Ward')
+                        st.rerun()
+        with col2:
+            st.markdown("#### [WARD] Female")
+            females = wards_df[wards_df['location'] == 'Female Ward']
+            for _, row in females.iterrows():
+                with st.container(border=True):
+                    st.info(f"Bed Assigned: {row['patient_name']} (Age: {row['age']})")
+                    if st.button("Discharge Patient", key=f"d_{row['rowid']}", use_container_width=True):
+                        agent_sys.discharge_from_ward(row['rowid'], row['patient_name'], 'Female Ward')
+                        st.rerun()
+        with col3:
+            st.markdown("#### [WARD] Pediatrics")
+            kids = wards_df[wards_df['location'] == "Children's Ward"]
+            for _, row in kids.iterrows():
+                with st.container(border=True):
+                    st.info(f"Bed Assigned: {row['patient_name']} (Age: {row['age']})")
+                    if st.button("Discharge Patient", key=f"d_{row['rowid']}", use_container_width=True):
+                        agent_sys.discharge_from_ward(row['rowid'], row['patient_name'], "Children's Ward")
+                        st.rerun()
+
+
+# --- ROLE 5: DIAGNOSTICS ---
+elif user_role == "Diagnostics (Imaging/Lab)":
+    conn = get_db_connection()
+    lab_df = pd.read_sql_query("SELECT rowid, patient_name, queue_number, notes FROM appointments WHERE location='Imaging/Lab' AND booking_date<=?", conn, params=(target_date,))
+    conn.close()
+    
+    if lab_df.empty:
+        st.info("No pending imaging or lab requests.")
+    else:
+        for _, row in lab_df.iterrows():
+            with st.expander(f"Patient: {row['patient_name']} ({row['queue_number']})", expanded=True):
+                st.markdown(f"**Medical Record & Directive:** {row['notes']}")
+                if st.button("Upload Results & Return to Doctor", key=f"res_{row['rowid']}"):
+                    agent_sys.upload_lab_results(row['rowid'], row['patient_name'])
+                    st.rerun()
+
+
+# --- ROLE 6: PHARMACY ---
+elif user_role == "Pharmacy (Dispensing)":
+    conn = get_db_connection()
+    pharm_df = pd.read_sql_query("SELECT rowid, patient_name, queue_number, notes FROM appointments WHERE location='Pharmacy' AND booking_date<=?", conn, params=(target_date,))
+    conn.close()
+    
+    if pharm_df.empty:
+        st.info("No pending prescriptions.")
+    else:
+        for _, row in pharm_df.iterrows():
+            with st.expander(f"Patient: {row['patient_name']} ({row['queue_number']})", expanded=True):
+                st.markdown(f"**Medical Record & Prescription:** {row['notes']}")
+                if st.button("Mark Dispensed & Complete Visit", type="primary", key=f"disp_{row['rowid']}"):
+                    conn = get_db_connection()
+                    c = conn.cursor()
+                    c.execute("UPDATE appointments SET location='Completed', status='COMPLETED' WHERE rowid=?", (row['rowid'],))
+                    conn.commit()
+                    conn.close()
+                    agent_sys.log(f"[PHARMACY_AGENT] Drugs dispensed to {row['patient_name']}. Cycle complete.")
+                    st.rerun()
+
+
+# --- ROLE 7: SYSTEM TELEMETRY ---
+elif user_role == "System Telemetry":
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        log_box = st.container(height=500)
+        with log_box:
+            if not st.session_state.logs:
+                st.caption("Awaiting system events...")
+            else:
+                for log_msg in reversed(st.session_state.logs):
+                    st.markdown(f"`{log_msg}`")
+    with col2:
+        if st.button("Clear DB & Logs (Reset Demo)", type="primary"):
+            conn = get_db_connection()
             c = conn.cursor()
             c.execute("DELETE FROM appointments")
-            c.execute("DELETE FROM waitlist")
             conn.commit()
             conn.close()
             st.session_state.logs = []
             st.rerun()
-
-with tab_logs:
-    st.subheader("System Telemetry & Event Audit")
-    st.caption("Real-time stream of agent negotiations, triage overrides, and automated logic protocols.")
-    
-    log_box = st.container()
-    with log_box:
-        if not st.session_state.logs:
-            st.write("Awaiting autonomous system events...")
-        else:
-            log_html = "<div id='logarea' style='height:500px; overflow:auto; padding:8px; border:1px solid #e6e6e6; background:#ffffff; border-radius:6px;'>"
-            for log_msg in reversed(st.session_state.logs):
-                if "CRITICAL" in log_msg or "CODE_BLUE" in log_msg:
-                    style = "color:#721c24;background:#f8d7da;padding:8px;margin-bottom:6px;border-radius:4px;"
-                elif "REJECT" in log_msg or "ALERT" in log_msg:
-                    style = "color:#721c24;background:#f8d7da;padding:8px;margin-bottom:6px;border-radius:4px;"
-                elif "PROPOSE" in log_msg or "ACTION" in log_msg or "migrating" in log_msg:
-                    style = "color:#856404;background:#fff3cd;padding:8px;margin-bottom:6px;border-radius:4px;"
-                elif "AUTOMATED_TRIAGE" in log_msg:
-                    style = "color:#0c5460;background:#d1ecf1;padding:8px;margin-bottom:6px;border-radius:4px;"
-                elif "ACCEPT" in log_msg or "discharged" in log_msg or "INFORM" in log_msg:
-                    style = "color:#155724;background:#d4edda;padding:8px;margin-bottom:6px;border-radius:4px;"
-                else:
-                    style = "color:#0c5460;background:#e2f0f9;padding:8px;margin-bottom:6px;border-radius:4px;"
-                log_html += f"<div style='{style}'>" + log_msg + "</div>\n"
-            log_html += "</div><script>var e=document.getElementById('logarea'); if(e){ e.scrollTop = e.scrollHeight; }</script>"
-            st.markdown(log_html, unsafe_allow_html=True)
-            
-        if st.button("Clear Telemetry Data", use_container_width=True):
-            st.session_state.logs = []
-            st.rerun()
-
-with tab_analytics:
-    st.subheader("System Analytics & Waitlist Management")
-    
-    col_a1, col_a2 = st.columns(2)
-    
-    with col_a1:
-        st.markdown("#### Acuity & Specialty Distribution")
-        conn = sqlite3.connect(DB_NAME)
-        chart_df = pd.read_sql_query("SELECT d.specialty, COUNT(*) as count FROM appointments a JOIN doctors d ON a.doc_id = d.doc_id GROUP BY d.specialty", conn)
-        conn.close()
-        
-        if not chart_df.empty:
-            fig = px.pie(chart_df, names='specialty', values='count', hole=0.4, title="Active Admissions by Ward")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Insufficient data for graphical distribution.")
-
-    with col_a2:
-        st.markdown("#### Shift Transition & Rollover Protocol")
-        st.caption("Execute end-of-shift processing to systematically migrate unallocated triage patients to the next operational cycle.")
-        rollover_date = st.date_input("Select Transition Date:", datetime.date.today(), key="eod_cal")
-        
-        if st.button("Execute Rollover Protocol", use_container_width=True):
-            scheduler.process_eod_waitlist(rollover_date.strftime("%Y-%m-%d"))
-            st.rerun()
-
-    st.divider()
-    st.markdown("#### Clinical Priority Waitlist Register")
-    conn = sqlite3.connect(DB_NAME)
-    waitlist_df = pd.read_sql_query("SELECT target_date as 'Date', patient_name as 'Patient', specialty as 'Target Ward', triage_level as 'Priority Level' FROM waitlist ORDER BY target_date ASC, triage_level ASC", conn)
-    conn.close()
-
-    if not waitlist_df.empty:
-        st.warning("Unallocated patients pending resource availability or shift transition.")
-        st.dataframe(waitlist_df, use_container_width=True)
-    else:
-        st.info("Waitlist status: Clear. All patient vectors successfully admitted.")
