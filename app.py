@@ -1,14 +1,18 @@
 import sqlite3
 import pandas as pd
 import streamlit as st
-import random
 import datetime
+import html
+import uuid
 
 # --- 1. DATABASE SETUP (BULLETPROOF INITIALIZATION) ---
 DB_NAME = 'medagent_enterprise.db'
 
 def get_db_connection():
-    return sqlite3.connect(DB_NAME, check_same_thread=False)
+    conn = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=10)
+    conn.execute("PRAGMA busy_timeout = 10000")
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 def init_db():
     conn = get_db_connection()
@@ -27,17 +31,18 @@ def init_db():
                  (booking_date TEXT, patient_name TEXT, age INTEGER, gender TEXT, 
                   address TEXT, occupation TEXT, payment_status TEXT, triage_level INTEGER, 
                   specialty TEXT, added_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS audit_events
+                 (message TEXT NOT NULL, is_critical INTEGER NOT NULL DEFAULT 0,
+                  added_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     
-    c.execute("SELECT COUNT(*) FROM doctors")
-    if c.fetchone()[0] != 9:
-        c.execute("DELETE FROM doctors")
-        docs = [
+    docs = [
             (1, "Dr. Smith", "General Practice"), (2, "Dr. Taylor", "General Practice"),
             (3, "Dr. Jones", "Cardiology"), (4, "Dr. Davis", "Cardiology"),
             (5, "Dr. Brown", "Orthopedics"), (6, "Dr. Wilson", "Orthopedics"),
             (7, "Dr. Evans", "Emergency / Trauma"), (8, "Dr. Carter", "Emergency / Trauma"), (9, "Dr. Mitchell", "Emergency / Trauma")
-        ]
-        c.executemany("INSERT INTO doctors (doc_id, name, specialty) VALUES (?, ?, ?)", docs)
+    ]
+    c.executemany("INSERT OR IGNORE INTO doctors (doc_id, name, specialty) VALUES (?, ?, ?)", docs)
         
     conn.commit()
     conn.close()
@@ -55,8 +60,15 @@ class HospitalAgents:
     
     def log(self, message, is_critical=False):
         st.session_state.logs.append(message)
+        with get_db_connection() as conn:
+            conn.execute("INSERT INTO audit_events (message, is_critical) VALUES (?, ?)",
+                         (message, int(is_critical)))
         if is_critical:
             st.session_state.dynamic_alert = message
+
+    @staticmethod
+    def queue_number():
+        return f"Q-{uuid.uuid4().hex[:8].upper()}"
 
     def register_patient(self, name, age, gender, address, occ, payment, spec, triage, date):
         if triage in [1, 2]:
@@ -69,12 +81,18 @@ class HospitalAgents:
 
         conn = get_db_connection()
         c = conn.cursor()
+        c.execute("BEGIN IMMEDIATE")
         c.execute("SELECT doc_id, name FROM doctors WHERE specialty=?", (spec,))
         docs = c.fetchall()
+        if not docs:
+            conn.rollback()
+            conn.close()
+            self.log(f"[ROUTING_AGENT] No doctors configured for {spec}.", True)
+            return "NO_DOCTOR"
         
         doc_loads = []
         for doc_id, doc_name in docs:
-            c.execute("SELECT COUNT(*) FROM appointments WHERE doc_id=? AND booking_date<=? AND status NOT IN ('COMPLETED', 'ABSENT', 'ADMITTED')", (doc_id, date))
+            c.execute("SELECT COUNT(*) FROM appointments WHERE doc_id=? AND booking_date=? AND status NOT IN ('COMPLETED', 'ABSENT', 'ADMITTED', 'DIVERTED')", (doc_id, date))
             count = c.fetchone()[0]
             doc_loads.append((count, doc_id, doc_name))
             
@@ -83,12 +101,13 @@ class HospitalAgents:
         best_doc_id = doc_loads[0][1]
         best_doc_name = doc_loads[0][2]
 
-        q_num = f"Q-{random.randint(1000, 9999)}"
+        q_num = self.queue_number()
 
         if triage in [1, 2]:
             if best_load >= 1:
-                self.log(f"[CODE_BLUE_ALERT] Absolute Saturation. All 3 Emergency bays occupied. {name} rejected and diverted.", True)
+                conn.rollback()
                 conn.close()
+                self.log(f"[CODE_BLUE_ALERT] Absolute Saturation. All 3 Emergency bays occupied. {name} rejected and diverted.", True)
                 return "CODE_BLUE"
             loc = "Doctor Wait" 
         else:
@@ -111,6 +130,8 @@ class HospitalAgents:
     def process_vitals(self, rowid, name, bp_sys, temp, hr, spo2, rr):
         conn = get_db_connection()
         c = conn.cursor()
+        log_message = None
+        is_critical = False
         
         if bp_sys > 180 or temp > 39.0 or hr > 120 or spo2 < 92 or rr > 24:
             new_note = f"[VITALS]: BP {bp_sys}, HR {hr}, SpO2 {spo2}% [CRITICAL]"
@@ -124,21 +145,24 @@ class HospitalAgents:
             ed_loads.sort(key=lambda x: x[0])
             
             if ed_loads[0][0] >= 1:
-                self.log(f"[CODE_BLUE_ALERT] {name} crashed at Nurses Station, but Emergency Ward is full! Immediate internal diversion executed.", True)
-                c.execute("UPDATE appointments SET status='ABSENT', location='Archived', notes = notes || ? WHERE rowid=?", (" | [CRASH - ED FULL]", rowid))
-                self.run_vacuum() # Trigger vacuum since a slot opened up
+                log_message = f"[CODE_BLUE_ALERT] {name} crashed at Nurses Station, but Emergency Ward is full! Immediate internal diversion executed."
+                is_critical = True
+                c.execute("UPDATE appointments SET status='DIVERTED', location='Transfer Required', notes = notes || ? WHERE rowid=?", (" | [CRASH - ED FULL]", rowid))
             else:
                 best_ed_doc = ed_loads[0][1]
                 c.execute("UPDATE appointments SET triage_level=2, doc_id=?, location='Doctor Wait', notes = notes || ? WHERE rowid=?", (best_ed_doc, new_note, rowid))
-                self.log(f"[CLINICAL_PREP] [CRITICAL] Vitals breached threshold. {name} autonomously upgraded to L2 and shunted to Emergency Track.", True)
-                self.run_vacuum() # Trigger vacuum since the walk-in room is now empty
+                log_message = f"[CLINICAL_PREP] [CRITICAL] Vitals breached threshold. {name} autonomously upgraded to L2 and shunted to Emergency Track."
+                is_critical = True
+                # The original specialty slot becomes available after this commit.
         else:
             new_note = f"[VITALS]: BP {bp_sys}, HR {hr}, SpO2 {spo2}%"
             c.execute("UPDATE appointments SET location='Doctor Wait', notes = notes || ? WHERE rowid=?", (new_note, rowid))
-            self.log(f"[CLINICAL_PREP] Vitals logged for {name}. Cleared for consultation.")
+            log_message = f"[CLINICAL_PREP] Vitals logged for {name}. Cleared for consultation."
             
         conn.commit()
         conn.close()
+        self.log(log_message, is_critical)
+        self.run_vacuum()
 
     def admit_to_ward(self, rowid, name, age, gender):
         ward = "Children's Ward" if age < 18 else ("Male Ward" if gender == "Male" else "Female Ward")
@@ -171,7 +195,7 @@ class HospitalAgents:
         conn = get_db_connection()
         c = conn.cursor()
         new_note = " | [LAB]: RESULTS READY"
-        c.execute("UPDATE appointments SET location='Doctor Wait', notes = notes || ?, triage_level=2 WHERE rowid=?", (new_note, rowid))
+        c.execute("UPDATE appointments SET location='Doctor Wait', notes = notes || ? WHERE rowid=?", (new_note, rowid))
         conn.commit()
         conn.close()
         self.log(f"[DIAGNOSTIC_AGENT] Results uploaded for {name}. Patient returned to Doctor Queue.", True)
@@ -198,25 +222,27 @@ class HospitalAgents:
         # The agent now runs silently in the background
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute("SELECT rowid, booking_date, patient_name, age, gender, address, occupation, payment_status, triage_level, specialty FROM waitlist ORDER BY triage_level ASC, added_time ASC LIMIT 1")
-        row = c.fetchone()
+        c.execute("SELECT rowid, booking_date, patient_name, age, gender, address, occupation, payment_status, triage_level, specialty FROM waitlist ORDER BY triage_level ASC, added_time ASC")
+        rows = c.fetchall()
         
-        if not row:
+        if not rows:
             # Silent exit if nobody is waiting
             conn.close()
             return
             
-        wait_id, date, name, age, gender, address, occ, payment, triage, spec = row
-        c.execute("SELECT doc_id, name FROM doctors WHERE specialty=?", (spec,))
-        docs = c.fetchall()
-        for doc_id, doc_name in docs:
-            c.execute("SELECT COUNT(*) FROM appointments WHERE doc_id=? AND booking_date<=? AND status NOT IN ('COMPLETED', 'ABSENT', 'ADMITTED')", (doc_id, date))
-            if c.fetchone()[0] < 3: 
+        service_date = datetime.date.today().strftime("%Y-%m-%d")
+        for wait_id, _, name, age, gender, address, occ, payment, triage, spec in rows:
+            c.execute("SELECT doc_id, name FROM doctors WHERE specialty=?", (spec,))
+            docs = c.fetchall()
+            for doc_id, doc_name in docs:
+                c.execute("SELECT COUNT(*) FROM appointments WHERE doc_id=? AND booking_date=? AND status NOT IN ('COMPLETED', 'ABSENT', 'ADMITTED', 'DIVERTED')", (doc_id, service_date))
+                if c.fetchone()[0] >= 3:
+                    continue
                 c.execute("DELETE FROM waitlist WHERE rowid=?", (wait_id,))
-                q_num = f"Q-{random.randint(1000, 9999)}"
+                q_num = self.queue_number()
                 loc = "Nurses Station"
                 c.execute("INSERT INTO appointments (booking_date, doc_id, patient_name, age, gender, address, occupation, payment_status, triage_level, status, location, queue_number, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'WAITING', ?, ?, '')",
-                          (date, doc_id, name, age, gender, address, occ, payment, triage, loc, q_num))
+                          (service_date, doc_id, name, age, gender, address, occ, payment, triage, loc, q_num))
                 conn.commit()
                 # Only logs when it successfully takes autonomous action
                 self.log(f"[VACUUM_BROKER] Autonomous Event: Capacity detected. {name} automatically promoted from Waitlist and routed to {doc_name}.", True)
@@ -227,17 +253,22 @@ class HospitalAgents:
     def run_rollover(self, current_date):
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute("SELECT rowid, patient_name, specialty, triage_level FROM appointments WHERE booking_date < ? AND status='WAITING'", (current_date,))
+        c.execute("""SELECT a.rowid, a.patient_name, d.specialty, a.triage_level
+                     FROM appointments a JOIN doctors d ON a.doc_id=d.doc_id
+                     WHERE a.booking_date < ? AND a.status='WAITING'""", (current_date,))
         unserved = c.fetchall()
         if not unserved:
-            self.log("[STATE_PERSISTENCE] No unserved backlog found for rollover.")
             conn.close()
+            self.log("[STATE_PERSISTENCE] No unserved backlog found for rollover.")
             return
+        messages = []
         for rowid, name, spec, triage in unserved:
             c.execute("UPDATE appointments SET booking_date=? WHERE rowid=?", (current_date, rowid))
-            self.log(f"[STATE_PERSISTENCE] Rolled over unserved patient {name} ({spec}) to {current_date}.", True)
+            messages.append(f"[STATE_PERSISTENCE] Rolled over unserved patient {name} ({spec}) to {current_date}.")
         conn.commit()
         conn.close()
+        for message in messages:
+            self.log(message, True)
 
 
 # --- 3. STREAMLIT GUI ---
@@ -254,7 +285,8 @@ load_css()
 agent_sys = HospitalAgents()
 
 if st.session_state.get('dynamic_alert'):
-    st.markdown(f"<div class='dynamic-island'>{st.session_state.dynamic_alert}</div>", unsafe_allow_html=True)
+    safe_alert = html.escape(st.session_state.dynamic_alert)
+    st.markdown(f"<div class='dynamic-island'>{safe_alert}</div>", unsafe_allow_html=True)
     st.session_state.dynamic_alert = None
 
 # --- SIDEBAR ---
@@ -320,6 +352,8 @@ if user_role == "Front Desk (Intake)":
                 st.warning(f"⚠️ Capacity Full: {spec} is at maximum load. {p_name} deferred to the pending waitlist.")
             elif result == "SUCCESS":
                 st.success(f"✅ {p_name} successfully registered and routed to the network.")
+            elif result == "NO_DOCTOR":
+                st.error(f"❌ No doctor is configured for {spec}. Please contact an administrator.")
 
 
 # --- ROLE 2: NURSES STATION ---
@@ -461,11 +495,16 @@ elif user_role == "System Telemetry":
     with col1:
         log_box = st.container(height=400)
         with log_box:
-            if not st.session_state.logs:
+            conn = get_db_connection()
+            persisted_logs = conn.execute(
+                "SELECT message FROM audit_events ORDER BY rowid DESC LIMIT 200"
+            ).fetchall()
+            conn.close()
+            if not persisted_logs:
                 st.caption("Awaiting system events...")
             else:
-                for log_msg in reversed(st.session_state.logs):
-                    st.markdown(f"`{log_msg}`")
+                for (log_msg,) in persisted_logs:
+                    st.code(log_msg, language=None)
         
         st.divider()
         st.markdown("#### Pending Waitlist (Walk-in Overflow)")
@@ -488,11 +527,14 @@ elif user_role == "System Telemetry":
             st.rerun()
 
         st.divider()
-        if st.button("Clear DB & Logs (Reset)", type="primary", use_container_width=True):
+        confirm_reset = st.checkbox("I understand this permanently clears demo records")
+        if st.button("Clear DB & Logs (Reset)", type="primary", use_container_width=True,
+                     disabled=not confirm_reset):
             conn = get_db_connection()
             c = conn.cursor()
             c.execute("DELETE FROM appointments")
-            c.execute("DELETE FROM waitlist") 
+            c.execute("DELETE FROM waitlist")
+            c.execute("DELETE FROM audit_events")
             conn.commit()
             conn.close()
             st.session_state.logs = []
