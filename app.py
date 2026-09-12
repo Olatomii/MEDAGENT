@@ -334,20 +334,6 @@ st.title(f"{user_role}")
 
 # --- ROLE 1: FRONT DESK ---
 if user_role == "Front Desk (Intake)":
-    with st.expander("Demonstration controls"):
-        st.caption("Teaching simulation controls. Agent telemetry is read-only.")
-        if st.button("Run State Persistence Rollover"):
-            agent_sys.run_rollover(target_date)
-            st.rerun()
-        confirm_reset = st.checkbox("I understand this permanently clears demo records")
-        if st.button("Clear DB & Logs (Reset)", disabled=not confirm_reset):
-            with closing(get_db_connection()) as conn, conn:
-                conn.execute("DELETE FROM appointments")
-                conn.execute("DELETE FROM waitlist")
-                conn.execute("DELETE FROM audit_events")
-            st.session_state.logs = []
-            st.session_state.dynamic_alert = None
-            st.rerun()
     col1, col2 = st.columns(2)
     p_name = col1.text_input("Full Name")
     p_gender = col2.selectbox("Gender", ["Male", "Female"])
@@ -551,6 +537,24 @@ elif user_role == "System Telemetry":
             st.dataframe(waitlist_df, use_container_width=True, hide_index=True)
             
     with col2:
+        if st.button("Force Vacuum Agent (Manual Override)", use_container_width=True):
+            agent_sys.run_vacuum(target_date)
+            st.rerun()
+        if st.button("Run State Persistence Rollover", use_container_width=True):
+            agent_sys.run_rollover(target_date)
+            st.rerun()
+        st.caption("Rollover carries unfinished appointments to the System Target Date. Waitlisted patients remain waiting; no records are deleted.")
+        st.divider()
+        confirm_reset = st.checkbox("Confirm deletion of all appointments, waitlist entries and logs")
+        if st.button("Clear DB & Logs (Reset)", disabled=not confirm_reset, type="primary", use_container_width=True):
+            with closing(get_db_connection()) as conn, conn:
+                conn.execute("DELETE FROM appointments")
+                conn.execute("DELETE FROM waitlist")
+                conn.execute("DELETE FROM audit_events")
+            st.session_state.logs = []
+            st.session_state.dynamic_alert = None
+            st.rerun()
+        st.divider()
         st.caption("Read-only Blackboard snapshots")
         with closing(get_db_connection()) as conn:
             queues = pd.read_sql_query("""SELECT d.name AS Doctor, d.specialty AS Specialty,
