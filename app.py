@@ -4,9 +4,11 @@ import streamlit as st
 import datetime
 import html
 import uuid
+import os
+from contextlib import closing
 
 # --- 1. DATABASE SETUP (BULLETPROOF INITIALIZATION) ---
-DB_NAME = 'medagent_enterprise.db'
+DB_NAME = os.environ.get('MEDAGENT_DB_PATH', 'medagent_enterprise.db')
 
 def get_db_connection():
     conn = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=10)
@@ -60,7 +62,7 @@ class HospitalAgents:
     
     def log(self, message, is_critical=False):
         st.session_state.logs.append(message)
-        with get_db_connection() as conn:
+        with closing(get_db_connection()) as conn, conn:
             conn.execute("INSERT INTO audit_events (message, is_critical) VALUES (?, ?)",
                          (message, int(is_critical)))
         if is_critical:
@@ -68,12 +70,22 @@ class HospitalAgents:
 
     @staticmethod
     def queue_number():
-        return f"Q-{uuid.uuid4().hex[:8].upper()}"
+        return f"Q-{uuid.uuid4().hex.upper()}"
+
+    @staticmethod
+    def active_load(cursor, doc_id, date, emergency=False):
+        # Routine queues include unfinished backlog; ED has a global active-case cap.
+        query = """SELECT COUNT(*) FROM appointments WHERE doc_id=?
+                   AND status NOT IN ('COMPLETED', 'ABSENT', 'ADMITTED', 'DIVERTED')"""
+        params = (doc_id,)
+        if not emergency:
+            query += " AND booking_date<=?"
+            params += (date,)
+        return cursor.execute(query, params).fetchone()[0]
 
     def register_patient(self, name, age, gender, address, occ, payment, spec, triage, date):
         if triage in [1, 2]:
             spec = "Emergency / Trauma"
-            self.log(f"[TRIAGE_AGENT] [ALERT] Level {triage} Emergency. Billing exempt. {name} routed directly to Emergency Ward.", True)
         else:
             if payment != "Cleared":
                 self.log(f"[BILLING_AGENT] REJECT: {name} must clear billing before Walk-in/Scheduled consultation.", True)
@@ -92,8 +104,7 @@ class HospitalAgents:
         
         doc_loads = []
         for doc_id, doc_name in docs:
-            c.execute("SELECT COUNT(*) FROM appointments WHERE doc_id=? AND booking_date=? AND status NOT IN ('COMPLETED', 'ABSENT', 'ADMITTED', 'DIVERTED')", (doc_id, date))
-            count = c.fetchone()[0]
+            count = self.active_load(c, doc_id, date, emergency=triage in (1, 2))
             doc_loads.append((count, doc_id, doc_name))
             
         doc_loads.sort(key=lambda x: x[0])
@@ -123,6 +134,8 @@ class HospitalAgents:
         c.execute("INSERT INTO appointments (booking_date, doc_id, patient_name, age, gender, address, occupation, payment_status, triage_level, status, location, queue_number, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'WAITING', ?, ?, '')",
                   (date, best_doc_id, name, age, gender, address, occ, payment, triage, loc, q_num))
         conn.commit()
+        if triage in (1, 2):
+            self.log(f"[TRIAGE_AGENT] Level {triage} Emergency. Billing exempt. {name} routed directly to Emergency Ward.", True)
         self.log(f"[ROUTING_AGENT] {name} registered ({q_num}). Assigned to {best_doc_name} (Load: {best_load}). Routed to {loc}.")
         conn.close()
         return "SUCCESS"
@@ -132,6 +145,11 @@ class HospitalAgents:
         c = conn.cursor()
         log_message = None
         is_critical = False
+        c.execute("BEGIN IMMEDIATE")
+        patient = c.execute("SELECT booking_date FROM appointments WHERE rowid=? AND status='WAITING' AND location='Nurses Station'", (rowid,)).fetchone()
+        if patient is None:
+            conn.close()
+            return
         
         if bp_sys > 180 or temp > 39.0 or hr > 120 or spo2 < 92 or rr > 24:
             new_note = f"[VITALS]: BP {bp_sys}, HR {hr}, SpO2 {spo2}% [CRITICAL]"
@@ -140,14 +158,13 @@ class HospitalAgents:
             ed_docs = c.fetchall()
             ed_loads = []
             for d in ed_docs:
-                c.execute("SELECT COUNT(*) FROM appointments WHERE doc_id=? AND status NOT IN ('COMPLETED', 'ABSENT', 'ADMITTED')", (d[0],))
-                ed_loads.append((c.fetchone()[0], d[0], d[1]))
+                ed_loads.append((self.active_load(c, d[0], patient[0], emergency=True), d[0], d[1]))
             ed_loads.sort(key=lambda x: x[0])
             
-            if ed_loads[0][0] >= 1:
+            if not ed_loads or ed_loads[0][0] >= 1:
                 log_message = f"[CODE_BLUE_ALERT] {name} crashed at Nurses Station, but Emergency Ward is full! Immediate internal diversion executed."
                 is_critical = True
-                c.execute("UPDATE appointments SET status='DIVERTED', location='Transfer Required', notes = notes || ? WHERE rowid=?", (" | [CRASH - ED FULL]", rowid))
+                c.execute("UPDATE appointments SET triage_level=2, status='DIVERTED', location='Transfer Required', notes = notes || ? WHERE rowid=?", (new_note + " | [ED FULL - TRANSFER REQUIRED]", rowid))
             else:
                 best_ed_doc = ed_loads[0][1]
                 c.execute("UPDATE appointments SET triage_level=2, doc_id=?, location='Doctor Wait', notes = notes || ? WHERE rowid=?", (best_ed_doc, new_note, rowid))
@@ -162,7 +179,8 @@ class HospitalAgents:
         conn.commit()
         conn.close()
         self.log(log_message, is_critical)
-        self.run_vacuum()
+        if is_critical:
+            self.run_vacuum(patient[0])
 
     def admit_to_ward(self, rowid, name, age, gender):
         ward = "Children's Ward" if age < 18 else ("Male Ward" if gender == "Male" else "Female Ward")
@@ -218,11 +236,13 @@ class HospitalAgents:
         self.log(f"[EXCEPTION_AGENT] {name} flagged as ABSENT at {location}. Capacity released.")
         self.run_vacuum() # EVENT TRIGGER: Room is empty, call the Vacuum Agent!
 
-    def run_vacuum(self):
-        # The agent now runs silently in the background
+    def run_vacuum(self, service_date=None):
+        # Synchronous event response, not a separate background process.
+        service_date = service_date or st.session_state.get('service_date', datetime.date.today().isoformat())
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute("SELECT rowid, booking_date, patient_name, age, gender, address, occupation, payment_status, triage_level, specialty FROM waitlist ORDER BY triage_level ASC, added_time ASC")
+        c.execute("BEGIN IMMEDIATE")
+        c.execute("SELECT rowid, booking_date, patient_name, age, gender, address, occupation, payment_status, triage_level, specialty FROM waitlist WHERE booking_date<=? AND triage_level BETWEEN 3 AND 5 AND payment_status='Cleared' AND specialty!='Emergency / Trauma' ORDER BY triage_level ASC, added_time ASC, rowid ASC", (service_date,))
         rows = c.fetchall()
         
         if not rows:
@@ -230,13 +250,12 @@ class HospitalAgents:
             conn.close()
             return
             
-        service_date = datetime.date.today().strftime("%Y-%m-%d")
         for wait_id, _, name, age, gender, address, occ, payment, triage, spec in rows:
             c.execute("SELECT doc_id, name FROM doctors WHERE specialty=?", (spec,))
             docs = c.fetchall()
+            docs.sort(key=lambda d: (self.active_load(c, d[0], service_date), d[0]))
             for doc_id, doc_name in docs:
-                c.execute("SELECT COUNT(*) FROM appointments WHERE doc_id=? AND booking_date=? AND status NOT IN ('COMPLETED', 'ABSENT', 'ADMITTED', 'DIVERTED')", (doc_id, service_date))
-                if c.fetchone()[0] >= 3:
+                if self.active_load(c, doc_id, service_date) >= 3:
                     continue
                 c.execute("DELETE FROM waitlist WHERE rowid=?", (wait_id,))
                 q_num = self.queue_number()
@@ -308,12 +327,27 @@ user_role = st.sidebar.radio("View Agent Node:", [
 
 st.sidebar.divider()
 target_date = st.sidebar.date_input("System Target Date", datetime.date.today()).strftime("%Y-%m-%d")
+st.session_state.service_date = target_date
 
 st.title(f"{user_role}")
 
 
 # --- ROLE 1: FRONT DESK ---
 if user_role == "Front Desk (Intake)":
+    with st.expander("Demonstration controls"):
+        st.caption("Teaching simulation controls. Agent telemetry is read-only.")
+        if st.button("Run State Persistence Rollover"):
+            agent_sys.run_rollover(target_date)
+            st.rerun()
+        confirm_reset = st.checkbox("I understand this permanently clears demo records")
+        if st.button("Clear DB & Logs (Reset)", disabled=not confirm_reset):
+            with closing(get_db_connection()) as conn, conn:
+                conn.execute("DELETE FROM appointments")
+                conn.execute("DELETE FROM waitlist")
+                conn.execute("DELETE FROM audit_events")
+            st.session_state.logs = []
+            st.session_state.dynamic_alert = None
+            st.rerun()
     col1, col2 = st.columns(2)
     p_name = col1.text_input("Full Name")
     p_gender = col2.selectbox("Gender", ["Male", "Female"])
@@ -517,25 +551,15 @@ elif user_role == "System Telemetry":
             st.dataframe(waitlist_df, use_container_width=True, hide_index=True)
             
     with col2:
-        # Kept as a fallback "Force Manual Override" for the demonstration
-        if st.button("Force Vacuum Agent (Manual Override)", use_container_width=True):
-            agent_sys.run_vacuum()
-            st.rerun()
-            
-        if st.button("Run State Persistence Rollover", use_container_width=True):
-            agent_sys.run_rollover(target_date)
-            st.rerun()
-
-        st.divider()
-        confirm_reset = st.checkbox("I understand this permanently clears demo records")
-        if st.button("Clear DB & Logs (Reset)", type="primary", use_container_width=True,
-                     disabled=not confirm_reset):
-            conn = get_db_connection()
-            c = conn.cursor()
-            c.execute("DELETE FROM appointments")
-            c.execute("DELETE FROM waitlist")
-            c.execute("DELETE FROM audit_events")
-            conn.commit()
-            conn.close()
-            st.session_state.logs = []
-            st.rerun()
+        st.caption("Read-only Blackboard snapshots")
+        with closing(get_db_connection()) as conn:
+            queues = pd.read_sql_query("""SELECT d.name AS Doctor, d.specialty AS Specialty,
+                COUNT(a.rowid) AS Active FROM doctors d LEFT JOIN appointments a
+                ON a.doc_id=d.doc_id AND a.status NOT IN ('COMPLETED','ABSENT','ADMITTED','DIVERTED')
+                AND (a.booking_date<=? OR d.specialty='Emergency / Trauma')
+                GROUP BY d.doc_id ORDER BY d.doc_id""", conn, params=(target_date,))
+            transfers = pd.read_sql_query("SELECT patient_name, triage_level, location FROM appointments WHERE status='DIVERTED'", conn)
+        st.dataframe(queues, hide_index=True)
+        if not transfers.empty:
+            st.warning("Patients recorded as requiring transfer")
+            st.dataframe(transfers, hide_index=True)

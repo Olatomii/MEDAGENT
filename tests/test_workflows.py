@@ -1,4 +1,10 @@
 import datetime
+import os
+import tempfile
+
+# Importing Streamlit's app initializes the database. Never use the demo database.
+_test_directory = tempfile.TemporaryDirectory()
+os.environ['MEDAGENT_DB_PATH'] = os.path.join(_test_directory.name, 'test.db')
 
 import app
 
@@ -80,3 +86,59 @@ def test_critical_vitals_commit_before_vacuum():
     triage, status, location = conn.execute("SELECT triage_level, status, location FROM appointments WHERE rowid=?", (rowid,)).fetchone()
     conn.close()
     assert (triage, status, location) == (2, "WAITING", "Doctor Wait")
+
+
+def register(name, date, spec='General Practice', triage=4, payment='Cleared'):
+    return app.HospitalAgents().register_patient(name, 30, 'Male', '', '', payment, spec, triage, date)
+
+
+def test_backlog_counts_toward_routine_capacity():
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    for doc in (1, 2):
+        for i in range(3):
+            add_appointment(f'Backlog {doc}-{i}', doc_id=doc, date=yesterday)
+    assert register('Today', datetime.date.today().isoformat()) == 'WAITLIST'
+
+
+def test_emergency_cap_across_dates_and_billing_bypass():
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    for i in range(3):
+        assert register(f'ED {i}', yesterday, triage=1, payment='Pending') == 'SUCCESS'
+    assert register('Fourth ED', datetime.date.today().isoformat(), triage=2) == 'CODE_BLUE'
+    assert register('Routine unpaid', yesterday, payment='Pending') == 'BILLING_ERROR'
+
+
+def test_future_waitlist_is_not_promoted_early():
+    tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+    for i in range(6):
+        assert register(f'Future {i}', tomorrow) == 'SUCCESS'
+    assert register('Future waiting', tomorrow) == 'WAITLIST'
+    with app.get_db_connection() as conn:
+        conn.execute("UPDATE appointments SET status='COMPLETED'")
+    app.HospitalAgents().run_vacuum(datetime.date.today().isoformat())
+    with app.get_db_connection() as conn:
+        assert conn.execute('SELECT COUNT(*) FROM waitlist').fetchone()[0] == 1
+
+
+def test_repeated_vacuum_promotes_only_once():
+    today = datetime.date.today().isoformat()
+    for i in range(6):
+        register(f'Routine {i}', today)
+    register('Waiting patient', today)
+    with app.get_db_connection() as conn:
+        conn.execute("UPDATE appointments SET status='ABSENT' WHERE rowid=(SELECT MIN(rowid) FROM appointments)")
+    agent = app.HospitalAgents()
+    agent.run_vacuum(today)
+    agent.run_vacuum(today)
+    with app.get_db_connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM appointments WHERE patient_name='Waiting patient'").fetchone()[0] == 1
+
+
+def test_critical_ed_overflow_keeps_transfer_record():
+    today = datetime.date.today().isoformat()
+    for i in range(3):
+        register(f'ED {i}', today, triage=2)
+    rowid = add_appointment('Deteriorating patient')
+    app.HospitalAgents().process_vitals(rowid, 'Deteriorating patient', 190, 37, 80, 98, 16)
+    with app.get_db_connection() as conn:
+        assert conn.execute('SELECT triage_level,status,location FROM appointments WHERE rowid=?', (rowid,)).fetchone() == (2, 'DIVERTED', 'Transfer Required')
