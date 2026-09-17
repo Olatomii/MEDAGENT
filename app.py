@@ -6,6 +6,7 @@ import html
 import uuid
 import os
 from contextlib import closing
+import reminders
 
 # --- 1. DATABASE SETUP (BULLETPROOF INITIALIZATION) ---
 DB_NAME = os.environ.get('MEDAGENT_DB_PATH', 'medagent_enterprise.db')
@@ -47,6 +48,7 @@ def init_db():
     c.executemany("INSERT OR IGNORE INTO doctors (doc_id, name, specialty) VALUES (?, ?, ?)", docs)
         
     conn.commit()
+    reminders.migrate(conn)
     conn.close()
 
 init_db()
@@ -83,7 +85,14 @@ class HospitalAgents:
             params += (date,)
         return cursor.execute(query, params).fetchone()[0]
 
-    def register_patient(self, name, age, gender, address, occ, payment, spec, triage, date):
+    def register_patient(self, name, age, gender, address, occ, payment, spec, triage, date, email='', reminder_opt_in=False):
+        email = email.strip()
+        reminder_opt_in = bool(reminder_opt_in and triage in (3, 4, 5)
+                               and date > reminders.local_now().date().isoformat())
+        if reminder_opt_in and not reminders.valid_email(email):
+            return 'EMAIL_ERROR'
+        if not reminder_opt_in:
+            email = ''
         if triage in [1, 2]:
             spec = "Emergency / Trauma"
         else:
@@ -125,6 +134,8 @@ class HospitalAgents:
             if best_load >= 3:
                 c.execute("INSERT INTO waitlist (booking_date, patient_name, age, gender, address, occupation, payment_status, triage_level, specialty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                           (date, name, age, gender, address, occ, payment, triage, spec))
+                c.execute('UPDATE waitlist SET email=?,reminder_opt_in=?,reminder_date=? WHERE rowid=?',
+                          (email, int(reminder_opt_in), date if reminder_opt_in else '', c.lastrowid))
                 conn.commit()
                 self.log(f"[WAITLIST_BROKER] {spec} fully saturated at Qmax=3. {name} deferred to pending waitlist.")
                 conn.close()
@@ -133,6 +144,8 @@ class HospitalAgents:
 
         c.execute("INSERT INTO appointments (booking_date, doc_id, patient_name, age, gender, address, occupation, payment_status, triage_level, status, location, queue_number, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'WAITING', ?, ?, '')",
                   (date, best_doc_id, name, age, gender, address, occ, payment, triage, loc, q_num))
+        c.execute('UPDATE appointments SET email=?,reminder_opt_in=?,reminder_date=? WHERE queue_number=?',
+                  (email, int(reminder_opt_in), date if reminder_opt_in else '', q_num))
         conn.commit()
         if triage in (1, 2):
             self.log(f"[TRIAGE_AGENT] Level {triage} Emergency. Billing exempt. {name} routed directly to Emergency Ward.", True)
@@ -257,11 +270,14 @@ class HospitalAgents:
             for doc_id, doc_name in docs:
                 if self.active_load(c, doc_id, service_date) >= 3:
                     continue
+                contact = c.execute('SELECT email,reminder_opt_in,reminder_date FROM waitlist WHERE rowid=?', (wait_id,)).fetchone()
                 c.execute("DELETE FROM waitlist WHERE rowid=?", (wait_id,))
                 q_num = self.queue_number()
                 loc = "Nurses Station"
                 c.execute("INSERT INTO appointments (booking_date, doc_id, patient_name, age, gender, address, occupation, payment_status, triage_level, status, location, queue_number, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'WAITING', ?, ?, '')",
                           (service_date, doc_id, name, age, gender, address, occ, payment, triage, loc, q_num))
+                c.execute('UPDATE appointments SET email=?,reminder_opt_in=?,reminder_date=? WHERE queue_number=?',
+                          (*contact, q_num))
                 conn.commit()
                 # Only logs when it successfully takes autonomous action
                 self.log(f"[VACUUM_BROKER] Autonomous Event: Capacity detected. {name} automatically promoted from Waitlist and routed to {doc_name}.", True)
@@ -302,6 +318,13 @@ def load_css():
 
 load_css()
 agent_sys = HospitalAgents()
+
+@st.cache_resource
+def reminder_worker(db_path):
+    return reminders.start_worker(db_path)
+
+if reminders.configured():
+    reminder_worker(DB_NAME)
 
 if st.session_state.get('dynamic_alert'):
     safe_alert = html.escape(st.session_state.dynamic_alert)
@@ -355,6 +378,15 @@ if user_role == "Front Desk (Intake)":
         
     triage = st.selectbox("Acuity", triage_opts)
     payment = st.radio("Billing Status", ["Pending", "Cleared"], horizontal=True)
+    reminder_opt_in = False
+    p_email = ''
+    if spec != 'Emergency / Trauma' and appointment_date > reminders.local_now().date().isoformat():
+        reminder_opt_in = st.checkbox('Patient agrees to an email appointment reminder')
+        if reminder_opt_in:
+            p_email = st.text_input('Patient email address', placeholder='patient@example.com')
+            st.caption('One reminder the day before a confirmed appointment, from 9:00 am Lagos time. No reminder is sent while waitlisted.')
+            if not reminders.configured():
+                st.info('Email delivery is not activated yet. The reminder preference will be saved with the booking.')
     
     submitted = st.button("Route to Agent Network", type="primary")
     
@@ -362,7 +394,7 @@ if user_role == "Front Desk (Intake)":
         if not p_name:
             st.error("❌ Patient name is required.")
         else:
-            result = agent_sys.register_patient(p_name, p_age, p_gender, p_address, p_occ, payment, spec, int(triage[0]), appointment_date)
+            result = agent_sys.register_patient(p_name, p_age, p_gender, p_address, p_occ, payment, spec, int(triage[0]), appointment_date, p_email, reminder_opt_in)
             
             if result == "BILLING_ERROR":
                 st.error(f"❌ System Reject: {p_name} must clear billing status before Walk-in/Scheduled admission.")
@@ -374,6 +406,8 @@ if user_role == "Front Desk (Intake)":
                 st.success(f"✅ {p_name} successfully registered and routed to the network.")
             elif result == "NO_DOCTOR":
                 st.error(f"❌ No doctor is configured for {spec}. Please contact an administrator.")
+            elif result == 'EMAIL_ERROR':
+                st.error('Enter a valid email address or untick the reminder option.')
 
 
 # --- ROLE 2: NURSES STATION ---
@@ -513,6 +547,12 @@ elif user_role == "Pharmacy (Dispensing)":
 elif user_role == "System Telemetry":
     col1, col2 = st.columns([3, 1])
     with col1:
+        st.caption('Email reminders: ' + ('enabled while the server is running' if reminders.configured() else 'delivery not activated'))
+        with closing(get_db_connection()) as conn:
+            reminder_status = pd.read_sql_query('SELECT appointment_date AS Date, status AS Status, COUNT(*) AS Count FROM email_reminders GROUP BY appointment_date,status', conn)
+        if not reminder_status.empty:
+            st.dataframe(reminder_status, hide_index=True)
+            st.caption('ACCEPTED means the email provider accepted the message, not confirmed inbox delivery. REVIEW_REQUIRED or lingering SENDING needs delivery verification before any retry.')
         log_box = st.container(height=400)
         with log_box:
             conn = get_db_connection()
@@ -551,6 +591,7 @@ elif user_role == "System Telemetry":
                 conn.execute("DELETE FROM appointments")
                 conn.execute("DELETE FROM waitlist")
                 conn.execute("DELETE FROM audit_events")
+                conn.execute('DELETE FROM email_reminders')
             st.session_state.logs = []
             st.session_state.dynamic_alert = None
             st.rerun()

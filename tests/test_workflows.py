@@ -5,6 +5,7 @@ import tempfile
 # Importing Streamlit's app initializes the database. Never use the demo database.
 _test_directory = tempfile.TemporaryDirectory()
 os.environ['MEDAGENT_DB_PATH'] = os.path.join(_test_directory.name, 'test.db')
+os.environ['REMINDERS_ENABLED'] = 'false'
 
 import app
 
@@ -142,3 +143,28 @@ def test_critical_ed_overflow_keeps_transfer_record():
     app.HospitalAgents().process_vitals(rowid, 'Deteriorating patient', 190, 37, 80, 98, 16)
     with app.get_db_connection() as conn:
         assert conn.execute('SELECT triage_level,status,location FROM appointments WHERE rowid=?', (rowid,)).fetchone() == (2, 'DIVERTED', 'Transfer Required')
+
+
+def test_email_preference_survives_waitlist_promotion():
+    tomorrow = (app.reminders.local_now().date() + datetime.timedelta(days=1)).isoformat()
+    agent = app.HospitalAgents()
+    for i in range(6):
+        assert register(f'Booked {i}', tomorrow) == 'SUCCESS'
+    args = ('Email patient', 30, 'Male', '', '', 'Cleared', 'General Practice', 4, tomorrow)
+    assert agent.register_patient(*args, 'invalid', True) == 'EMAIL_ERROR'
+    with app.get_db_connection() as conn:
+        assert conn.execute('SELECT COUNT(*) FROM waitlist').fetchone()[0] == 0
+    assert agent.register_patient(*args, 'patient@example.com', True) == 'WAITLIST'
+    with app.get_db_connection() as conn:
+        assert conn.execute('SELECT email,reminder_opt_in,reminder_date FROM waitlist').fetchone() == ('patient@example.com', 1, tomorrow)
+        conn.execute("UPDATE appointments SET status='COMPLETED'")
+    agent.run_vacuum(tomorrow)
+    with app.get_db_connection() as conn:
+        assert conn.execute("SELECT email,reminder_opt_in,reminder_date FROM appointments WHERE patient_name='Email patient'").fetchone() == ('patient@example.com', 1, tomorrow)
+
+
+def test_email_opt_out_does_not_store_contact():
+    tomorrow = (app.reminders.local_now().date() + datetime.timedelta(days=1)).isoformat()
+    assert app.HospitalAgents().register_patient('No email', 30, 'Male', '', '', 'Cleared', 'General Practice', 4, tomorrow, 'patient@example.com', False) == 'SUCCESS'
+    with app.get_db_connection() as conn:
+        assert conn.execute('SELECT email,reminder_opt_in FROM appointments').fetchone() == ('', 0)
