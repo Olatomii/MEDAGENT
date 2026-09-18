@@ -1,3 +1,13 @@
+import os
+import runpy
+from pathlib import Path
+
+# Deployment switch keeps the legacy entry point available for rollback.
+if os.getenv('MEDAGENT_APP_VERSION') == 'v2':
+    runpy.run_path(str(Path(__file__).with_name('app_v2.py')), run_name='__main__')
+    import streamlit as st
+    st.stop()
+
 import sqlite3
 import pandas as pd
 import streamlit as st

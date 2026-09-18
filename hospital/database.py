@@ -1,0 +1,111 @@
+import sqlite3
+import uuid
+from contextlib import contextmanager
+
+
+def identifier(prefix):
+    return prefix + '-' + uuid.uuid4().hex.upper()
+
+
+@contextmanager
+def connection(path, write=False):
+    conn = sqlite3.connect(path, timeout=15)
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA foreign_keys=ON')
+    try:
+        if write:
+            conn.execute('BEGIN IMMEDIATE')
+        yield conn
+        if write:
+            conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def initialize(path):
+    with connection(path, write=True) as conn:
+        # Never silently reinterpret the original application's database.
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='appointments'").fetchone():
+            columns = {r['name'] for r in conn.execute('PRAGMA table_info(appointments)')}
+            if 'appointment_id' not in columns:
+                raise ValueError('Use a separate database for the new version; import the original read-only.')
+        statements = [
+            '''CREATE TABLE IF NOT EXISTS patients (
+                patient_id TEXT PRIMARY KEY, name TEXT NOT NULL, age INTEGER NOT NULL CHECK(age BETWEEN 0 AND 120),
+                gender TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP)''',
+            '''CREATE TABLE IF NOT EXISTS doctors (
+                doctor_id INTEGER PRIMARY KEY, name TEXT NOT NULL, specialty TEXT NOT NULL)''',
+            '''CREATE TABLE IF NOT EXISTS sessions (
+                doctor_id INTEGER REFERENCES doctors, service_date TEXT NOT NULL,
+                capacity INTEGER NOT NULL CHECK(capacity>=0), PRIMARY KEY(doctor_id,service_date))''',
+            '''CREATE TABLE IF NOT EXISTS appointments (
+                appointment_id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients,
+                service_date TEXT NOT NULL, specialty TEXT NOT NULL, urgency INTEGER NOT NULL CHECK(urgency BETWEEN 1 AND 5),
+                doctor_id INTEGER REFERENCES doctors, status TEXT NOT NULL
+                CHECK(status IN ('CONFIRMED','WAITLISTED','CHECKED_IN','CANCELLED','MISSED','FULFILLED')),
+                reminder_opt_in INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP)''',
+            '''CREATE TABLE IF NOT EXISTS visits (
+                visit_id TEXT PRIMARY KEY, appointment_id TEXT NOT NULL UNIQUE REFERENCES appointments,
+                state TEXT NOT NULL CHECK(state IN ('ASSESSMENT','CONSULTATION','DIAGNOSTICS','PHARMACY','ADMITTED','COMPLETED','TRANSFER_REQUIRED')),
+                notes TEXT NOT NULL DEFAULT '', version INTEGER NOT NULL DEFAULT 0,
+                checked_in_at TEXT DEFAULT CURRENT_TIMESTAMP, completed_at TEXT)''',
+            '''CREATE TABLE IF NOT EXISTS events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, entity_id TEXT NOT NULL,
+                payload TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                processed_at TEXT, attempts INTEGER NOT NULL DEFAULT 0, error TEXT)''',
+            '''CREATE TABLE IF NOT EXISTS decisions (
+                decision_id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL REFERENCES events,
+                agent TEXT NOT NULL, entity_id TEXT NOT NULL, reason TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(event_id,agent,entity_id))''',
+            '''CREATE TABLE IF NOT EXISTS legacy_imports (
+                source TEXT NOT NULL, source_table TEXT NOT NULL, source_row INTEGER NOT NULL,
+                appointment_id TEXT NOT NULL REFERENCES appointments,
+                PRIMARY KEY(source,source_table,source_row))''',
+            'CREATE INDEX IF NOT EXISTS appointments_session ON appointments(service_date,doctor_id,status)',
+            'CREATE INDEX IF NOT EXISTS pending_events ON events(processed_at,event_id)',
+        ]
+        for statement in statements:
+            conn.execute(statement)
+        if 'actor_id' not in {r['name'] for r in conn.execute('PRAGMA table_info(events)')}:
+            conn.execute('ALTER TABLE events ADD COLUMN actor_id INTEGER')
+        # Additive migration from the first foundation release; safe to rerun.
+        additions = {
+            'appointments': [('billing_status', "TEXT NOT NULL DEFAULT 'PENDING'"),
+                             ('billing_reference', "TEXT NOT NULL DEFAULT ''"),
+                             ('revision', 'INTEGER NOT NULL DEFAULT 0'),
+                             ('queue_entered_at', 'TEXT')],
+            'visits': [('assigned_doctor_id', 'INTEGER REFERENCES doctors(doctor_id)'),
+                       ('urgency', 'INTEGER'), ('ward_id', 'INTEGER REFERENCES wards(ward_id)')],
+        }
+        conn.execute('''CREATE TABLE IF NOT EXISTS wards (
+            ward_id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+            capacity INTEGER NOT NULL CHECK(capacity>=0))''')
+        for table, columns in additions.items():
+            existing={r['name'] for r in conn.execute(f'PRAGMA table_info({table})')}
+            for name, definition in columns:
+                if name not in existing:
+                    conn.execute(f'ALTER TABLE {table} ADD COLUMN {name} {definition}')
+        conn.execute("UPDATE appointments SET billing_status='EXEMPT' WHERE urgency IN (1,2)")
+        conn.execute('''UPDATE visits SET assigned_doctor_id=(SELECT doctor_id FROM appointments a WHERE a.appointment_id=visits.appointment_id)
+            WHERE assigned_doctor_id IS NULL''')
+        conn.execute('''UPDATE visits SET urgency=(SELECT urgency FROM appointments a WHERE a.appointment_id=visits.appointment_id)
+            WHERE urgency IS NULL''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS vitals (
+            vital_id INTEGER PRIMARY KEY, visit_id TEXT NOT NULL REFERENCES visits,
+            systolic REAL NOT NULL, temperature REAL NOT NULL, heart_rate REAL NOT NULL,
+            spo2 REAL NOT NULL, respiratory_rate REAL NOT NULL, flagged INTEGER NOT NULL,
+            recorded_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS notifications (
+            reminder_key TEXT PRIMARY KEY, appointment_id TEXT NOT NULL REFERENCES appointments,
+            appointment_date TEXT NOT NULL, status TEXT NOT NULL,
+            provider_id TEXT, error_code TEXT, updated_at TEXT NOT NULL)''')
+        for ward_id, name in [(1,'Male Ward'),(2,'Female Ward'),(3,"Children's Ward")]:
+            conn.execute('INSERT OR IGNORE INTO wards VALUES (?,?,0)',(ward_id,name))
+        for i, name, specialty in [(1,'Dr. Smith','General Practice'),(2,'Dr. Taylor','General Practice'),
+                (3,'Dr. Jones','Cardiology'),(4,'Dr. Davis','Cardiology'),(5,'Dr. Brown','Orthopedics'),
+                (6,'Dr. Wilson','Orthopedics'),(7,'Dr. Evans','Emergency / Trauma'),
+                (8,'Dr. Carter','Emergency / Trauma'),(9,'Dr. Mitchell','Emergency / Trauma')]:
+            conn.execute('INSERT OR IGNORE INTO doctors VALUES (?,?,?)',(i,name,specialty))
