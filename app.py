@@ -307,7 +307,7 @@ class HospitalAgents:
 
 
 # --- 3. STREAMLIT GUI ---
-st.set_page_config(page_title="MedAgent Sync", layout="wide")
+st.set_page_config(page_title="MedAgent Sync | Patient management", page_icon="✚", layout="wide")
 
 def load_css():
     try:
@@ -333,11 +333,20 @@ if st.session_state.get('dynamic_alert'):
 
 # --- SIDEBAR ---
 st.sidebar.markdown("""
-    <h2 style='font-weight: 800; color: #007AFF; margin-bottom: 0;'>MedAgent Sync</h2>
-    <p style='color: #8E8E93; font-size: 12px; font-weight: 700; letter-spacing: 1px; margin-top: 0;'>MAS COORDINATION FRAMEWORK</p>
+    <div class="brand"><span class="brand-mark" aria-hidden="true">✚</span>
+    <div><strong>MedAgent Sync</strong><small>Hospital coordination</small></div></div>
+    <div class="nav-label">WORKSPACE</div>
 """, unsafe_allow_html=True)
 
-st.sidebar.markdown("### System Dashboard")
+page_details = {
+    "Front Desk (Intake)": ("Front desk", "Register patients and coordinate their next step in care."),
+    "Nurses Station (Clinical Prep)": ("Nurses station", "Record vital signs and prepare patients for consultation."),
+    "Physician (Consultation)": ("Consultations", "Review the clinical queue and coordinate patient care."),
+    "Inpatient Wards": ("Inpatient wards", "Manage admitted patients across the hospital wards."),
+    "Diagnostics (Imaging/Lab)": ("Diagnostics", "Manage investigations and return patients to their doctor."),
+    "Pharmacy (Dispensing)": ("Pharmacy", "Review prescriptions, dispense medication and complete visits."),
+    "System Telemetry": ("System telemetry", "Follow agent activity, waiting lists and hospital capacity."),
+}
 user_role = st.sidebar.radio("View Agent Node:", [
     "Front Desk (Intake)", 
     "Nurses Station (Clinical Prep)", 
@@ -346,17 +355,45 @@ user_role = st.sidebar.radio("View Agent Node:", [
     "Diagnostics (Imaging/Lab)", 
     "Pharmacy (Dispensing)", 
     "System Telemetry"
-])
+], format_func=lambda role: page_details[role][0], label_visibility="collapsed")
 
 st.sidebar.divider()
 target_date = st.sidebar.date_input("System Target Date", datetime.date.today()).strftime("%Y-%m-%d")
 st.session_state.service_date = target_date
 
-st.title(f"{user_role}")
+st.sidebar.caption("Queues are shown through this date. Email reminders use the actual calendar date.")
+st.sidebar.divider()
+st.sidebar.markdown('<div class="sidebar-note">Agent-based intelligent hospital<br>appointment & patient management</div>', unsafe_allow_html=True)
+page_title, page_description = page_details[user_role]
+display_date = datetime.date.fromisoformat(target_date).strftime('%d %b %Y')
+st.markdown(f'<div class="page-kicker">PATIENT OPERATIONS <span>Service date · {display_date}</span></div>', unsafe_allow_html=True)
+st.title(page_title)
+st.caption(page_description)
+
+def show_overview():
+    with closing(get_db_connection()) as conn:
+        active, emergency, admitted = conn.execute("""SELECT
+            COUNT(CASE WHEN status NOT IN ('COMPLETED','ABSENT','ADMITTED','DIVERTED') THEN 1 END),
+            COUNT(CASE WHEN triage_level IN (1,2) AND status NOT IN ('COMPLETED','ABSENT','ADMITTED','DIVERTED') THEN 1 END),
+            COUNT(CASE WHEN status='ADMITTED' THEN 1 END)
+            FROM appointments WHERE booking_date<=?""", (target_date,)).fetchone()
+        waiting = conn.execute('SELECT COUNT(*) FROM waitlist WHERE booking_date<=?', (target_date,)).fetchone()[0]
+    with overview.container():
+        for column, label, value in zip(st.columns(4),
+                ('Active visits', 'Emergency visits', 'On waitlist', 'Admitted patients'),
+                (active, emergency, waiting, admitted)):
+            column.metric(label, value)
+
+overview = st.empty()
+show_overview()
+st.caption('Patient counts through the selected service date. Emergency visits are included in active visits.')
+st.divider()
 
 
 # --- ROLE 1: FRONT DESK ---
 if user_role == "Front Desk (Intake)":
+    st.subheader("Patient registration")
+    st.markdown('<div class="section-label">01 <span>Patient details</span></div>', unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     p_name = col1.text_input("Full Name")
     p_gender = col2.selectbox("Gender", ["Male", "Female"])
@@ -365,6 +402,7 @@ if user_role == "Front Desk (Intake)":
     p_address = st.text_input("Living Address")
     
     st.divider()
+    st.markdown('<div class="section-label">02 <span>Appointment & routing</span></div>', unsafe_allow_html=True)
     col3, col4 = st.columns(2)
     with col3:
         appointment_date = st.date_input("Schedule Appointment Date", datetime.date.today()).strftime("%Y-%m-%d")
@@ -408,6 +446,7 @@ if user_role == "Front Desk (Intake)":
                 st.error(f"❌ No doctor is configured for {spec}. Please contact an administrator.")
             elif result == 'EMAIL_ERROR':
                 st.error('Enter a valid email address or untick the reminder option.')
+            show_overview()
 
 
 # --- ROLE 2: NURSES STATION ---
@@ -547,6 +586,7 @@ elif user_role == "Pharmacy (Dispensing)":
 elif user_role == "System Telemetry":
     col1, col2 = st.columns([3, 1])
     with col1:
+        st.subheader('Agent activity')
         st.caption('Email reminders: ' + ('enabled while the server is running' if reminders.configured() else 'delivery not activated'))
         with closing(get_db_connection()) as conn:
             reminder_status = pd.read_sql_query('SELECT appointment_date AS Date, status AS Status, COUNT(*) AS Count FROM email_reminders GROUP BY appointment_date,status', conn)
@@ -577,6 +617,7 @@ elif user_role == "System Telemetry":
             st.dataframe(waitlist_df, use_container_width=True, hide_index=True)
             
     with col2:
+        st.subheader('System controls')
         if st.button("Force Vacuum Agent (Manual Override)", use_container_width=True):
             agent_sys.run_vacuum(target_date)
             st.rerun()
