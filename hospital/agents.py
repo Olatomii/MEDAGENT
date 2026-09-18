@@ -53,7 +53,7 @@ class WaitlistAgent:
             return
         candidates = conn.execute('''SELECT * FROM appointments
             WHERE service_date=? AND specialty=? AND status='WAITLISTED'
-            ORDER BY urgency,created_at,rowid''',(date,specialty)).fetchall()
+            ORDER BY urgency,COALESCE(queue_entered_at,created_at),rowid''',(date,specialty)).fetchall()
         promoted = 0
         for candidate in candidates:
             doctor = available_doctor(conn,specialty,date)
@@ -82,7 +82,7 @@ class AppointmentAgent:
     name = 'Appointment agent'
 
     def handle(self, conn, event, data):
-        if event['kind'] in ('APPOINTMENT_CONFIRMED','APPOINTMENT_WAITLISTED','APPOINTMENT_CANCELLED','APPOINTMENT_MISSED','LEGACY_IMPORTED'):
+        if event['kind'] in ('APPOINTMENT_CONFIRMED','APPOINTMENT_WAITLISTED','APPOINTMENT_CANCELLED','APPOINTMENT_MISSED','APPOINTMENT_RESCHEDULED','LEGACY_IMPORTED'):
             decision(conn,event['event_id'],self.name,event['entity_id'],data['reason'])
 
 

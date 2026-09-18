@@ -94,7 +94,7 @@ priority promotion, recovery after a handler failure, and read-only legacy impor
 
 Before replacing the existing app, remaining work includes:
 
-- Appointment rescheduling, a patient portal and email ownership verification.
+- A patient portal and email ownership verification.
 - Clinician working hours/leave, active consultation tracking and queue estimates.
 - Authentication, server-enforced roles and audit attribution before real patient use.
 - Persistent hosting, backup/restore checks and deployment of the managed worker.

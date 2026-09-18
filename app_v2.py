@@ -134,6 +134,14 @@ elif page=='Appointments':
             if a['status'] in ('CONFIRMED','WAITLISTED'):
                 if st.button('Cancel appointment',key='cancel'+a['appointment_id']):
                     act(lambda:hospital.close_booking(a['appointment_id'],'CANCELLED'),'Appointment cancelled; waitlist checked.')
+                if a['urgency']>2:
+                    change_key=a['appointment_id']+str(a['revision'])
+                    new_date=st.date_input('New appointment date',value=max(dt.date.fromisoformat(a['service_date']),dt.date.fromisoformat(hospital.today())),
+                                           min_value=dt.date.fromisoformat(hospital.today()),key='newdate'+change_key)
+                    accept_waitlist=st.checkbox('If the new date is full, release my old booking and join the new date’s waitlist',key='acceptwait'+change_key)
+                    st.caption('The department and billing clearance stay with this appointment. Earlier emails cannot be recalled; inform the patient of the date change.')
+                    if st.button('Reschedule appointment',key='reschedule'+change_key):
+                        act(lambda:hospital.reschedule(a['appointment_id'],a['revision'],new_date.isoformat(),accept_waitlist),'Rescheduled. New status:')
             if a['status']=='CONFIRMED' and a['service_date']<hospital.today():
                 if st.button('Mark missed',key='miss'+a['appointment_id']):
                     act(lambda:hospital.close_booking(a['appointment_id'],'MISSED'),'Appointment marked missed.')

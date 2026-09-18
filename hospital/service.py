@@ -106,6 +106,39 @@ class Hospital(ClinicalCare):
             emit(conn,'APPOINTMENT_'+status,appointment_id,date=a['service_date'],specialty=a['specialty'],allow_promotion=a['service_date']>=self.today(),reason='Staff recorded '+status.lower()+'.')
         process_events(self.path)
 
+    def reschedule(self,appointment_id,revision,new_date,allow_waitlist=False):
+        new_date=dt.date.fromisoformat(new_date).isoformat()
+        if new_date<self.today():
+            raise ValueError('Choose today or a future date.')
+        process_events(self.path)
+        with connection(self.path,write=True) as conn:
+            a=conn.execute('SELECT * FROM appointments WHERE appointment_id=?',(appointment_id,)).fetchone()
+            if a is None or a['revision']!=revision or a['status'] not in ('CONFIRMED','WAITLISTED'):
+                raise Conflict('The booking changed or has already started. Refresh before rescheduling.')
+            if a['urgency'] in (1,2):
+                raise Conflict('Emergency intake cannot be rescheduled as a routine appointment.')
+            if a['service_date']==new_date:
+                raise ValueError('Choose a different appointment date.')
+            if conn.execute("SELECT 1 FROM appointments WHERE patient_id=? AND service_date=? AND specialty=? AND status IN ('CONFIRMED','WAITLISTED','CHECKED_IN') AND appointment_id!=?",
+                            (a['patient_id'],new_date,a['specialty'],appointment_id)).fetchone():
+                raise Conflict('This patient already has an active booking for that department and date.')
+            doctor=available_doctor(conn,a['specialty'],new_date)
+            if doctor is None and not allow_waitlist:
+                raise Conflict('No place is available on the new date. Your original booking is unchanged. Choose another date or explicitly accept the waitlist.')
+            status='CONFIRMED' if doctor else 'WAITLISTED'
+            conn.execute('''UPDATE appointments SET service_date=?,doctor_id=?,status=?,revision=revision+1,
+                reminder_opt_in=?,queue_entered_at=CURRENT_TIMESTAMP WHERE appointment_id=?''',
+                (new_date,doctor['doctor_id'] if doctor else None,status,
+                 a['reminder_opt_in'] if new_date>self.today() else 0,appointment_id))
+            emit(conn,'APPOINTMENT_RESCHEDULED',appointment_id,
+                 old_date=a['service_date'],new_date=new_date,revision=revision+1,
+                 reason=f"Staff rescheduled {a['service_date']} → {new_date}; new status {status}. Billing record retained.")
+            if a['status']=='CONFIRMED':
+                emit(conn,'CAPACITY_CHANGED',appointment_id,date=a['service_date'],specialty=a['specialty'],
+                     allow_promotion=a['service_date']>=self.today())
+        process_events(self.path)
+        return status
+
     def check_in(self,appointment_id):
         visit_id=identifier('V')
         with connection(self.path,write=True) as conn:

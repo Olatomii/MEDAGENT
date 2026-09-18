@@ -39,7 +39,9 @@ def dispatch(path,now=None,sender=None):
                 (candidate['appointment_id'],date)).fetchone()
             if row is None or not reminders.valid_email(row['email']):
                 continue
-            key=hashlib.sha256(f"v2:{row['appointment_id']}:{date}".encode()).hexdigest()
+            # Keep revision-zero keys compatible with already recorded deliveries.
+            suffix=f":revision:{row['revision']}" if row['revision'] else ''
+            key=hashlib.sha256(f"v2:{row['appointment_id']}:{date}{suffix}".encode()).hexdigest()
             claimed=conn.execute('''INSERT OR IGNORE INTO notifications(reminder_key,appointment_id,appointment_date,status,updated_at)
                 VALUES (?,?,?,'SENDING',?)''',(key,row['appointment_id'],date,now.isoformat())).rowcount
         if not claimed:

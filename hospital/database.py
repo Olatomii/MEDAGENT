@@ -72,7 +72,9 @@ def initialize(path):
         # Additive migration from the first foundation release; safe to rerun.
         additions = {
             'appointments': [('billing_status', "TEXT NOT NULL DEFAULT 'PENDING'"),
-                             ('billing_reference', "TEXT NOT NULL DEFAULT ''")],
+                             ('billing_reference', "TEXT NOT NULL DEFAULT ''"),
+                             ('revision', 'INTEGER NOT NULL DEFAULT 0'),
+                             ('queue_entered_at', 'TEXT')],
             'visits': [('assigned_doctor_id', 'INTEGER REFERENCES doctors(doctor_id)'),
                        ('urgency', 'INTEGER'), ('ward_id', 'INTEGER REFERENCES wards(ward_id)')],
         }

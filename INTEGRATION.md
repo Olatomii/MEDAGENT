@@ -75,6 +75,27 @@ Email edits revoke reminder consent on unstarted bookings. Staff must confirm
 consent for the updated address. Likely domain typos produce suggestions, without
 rewriting addresses. Syntax validation does not verify mailbox existence/ownership.
 
+## Appointment rescheduling
+
+Unstarted routine bookings can move to today or a future date, within their
+existing department. The operation serializes allocation of the new place and
+release of the old one. If the target is full, the original booking remains
+unchanged unless staff explicitly select the option to join the new date's waitlist.
+The source date's eligible waitlist is then processed through a durable capacity event.
+
+Patient identity, original creation time, billing reference and clearance stay
+with the appointment. This assumes transferable recorded billing clearance within
+the same department; no financial refund or payment movement is performed.
+The rescheduling event retains old/new dates and revision. Waiting priority on
+the new date starts at rescheduling time. Emergency, started, cancelled and stale
+bookings cannot be moved; duplicate active department/date bookings are rejected.
+
+Day-before reminders follow the current date and consent. The revised booking
+gets a new reminder identity, even if moved back to a previously used date; old
+send history remains intact. Moving to today clears day-before reminder consent.
+No immediate date-change email is sent. Staff must communicate the change; prior
+emails cannot be recalled, and an already claimed send can race with rescheduling.
+
 ## Validation
 
 Run `python -m pytest -q`. Integration cases cover billing, ED exemption, complete
