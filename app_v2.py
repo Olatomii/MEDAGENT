@@ -7,14 +7,45 @@ from hospital.service import Hospital, TRANSITIONS
 from hospital.agents import process_events
 from hospital import notifications
 from reminders import valid_email
+from hospital.auth import initialize_auth,login,logout,AccessDenied
+from hospital.access import StaffHospital,PAGES
 
 st.set_page_config(page_title='MedAgent | Patient workspace',page_icon='✚',layout='wide')
 st.markdown('<style>'+Path(__file__).with_name('style.css').read_text()+'</style>',unsafe_allow_html=True)
-hospital=Hospital(os.getenv('MEDAGENT_V2_DB_PATH','medagent_v2.db'))
+core=Hospital(os.getenv('MEDAGENT_V2_DB_PATH','medagent_v2.db'))
+initialize_auth(core.path)
+if not st.session_state.get('staff_token'):
+    st.title('MedAgent staff sign-in')
+    with st.form('signin',clear_on_submit=True):
+        username=st.text_input('Username')
+        password=st.text_input('Password',type='password')
+        if st.form_submit_button('Sign in',type='primary'):
+            try:
+                token=login(core.path,username,password)
+            except AccessDenied as exc:
+                st.error(str(exc))
+            else:
+                st.session_state.clear()
+                st.session_state.staff_token=token
+                st.rerun()
+    st.caption('Ask your administrator for an account. Initial accounts are created on the host with the create-staff command; there is no default password.')
+    st.stop()
+hospital=StaffHospital(core,st.session_state.staff_token)
+try:
+    staff=hospital.user
+except AccessDenied:
+    st.session_state.clear()
+    st.rerun()
 process_events(hospital.path)
 st.sidebar.title('MedAgent Sync')
 st.sidebar.caption('Patient & agent workspace')
-page=st.sidebar.radio('Workspace',['Patients','Appointments','Care workspace','Wards','Doctor sessions','Agent decisions'])
+st.sidebar.caption(staff['username']+' · '+staff['role'].replace('_',' '))
+if st.sidebar.button('Sign out'):
+    logout(hospital.path,st.session_state.staff_token)
+    st.session_state.clear()
+    st.rerun()
+page=st.sidebar.radio('Workspace',PAGES[staff['role']])
+hospital.authorize_page(page)
 st.sidebar.info('Development version · separate patient database')
 st.title(page)
 if st.session_state.get('feedback'):
@@ -60,11 +91,14 @@ if page=='Patients':
         st.caption('Changing the address clears reminder consent on unstarted appointments. Confirm consent again under Appointments.')
         if st.button('Save email'):
             act(lambda:hospital.update_email(selected,contact['email'],edited_email),'Email saved.')
-        history=hospital.records('''SELECT a.appointment_id,a.service_date,a.specialty,a.status,v.visit_id,v.state,v.notes
-            FROM appointments a LEFT JOIN visits v USING(appointment_id) WHERE a.patient_id=? ORDER BY a.service_date DESC''',(selected,))
+        history=hospital.records('''SELECT appointment_id,service_date,specialty,status FROM appointments
+            WHERE patient_id=? ORDER BY service_date DESC''',(selected,))
+        if staff['role']=='admin':
+            history=hospital.records('''SELECT a.appointment_id,a.service_date,a.specialty,a.status,v.visit_id,v.state,v.notes
+                FROM appointments a LEFT JOIN visits v USING(appointment_id) WHERE a.patient_id=? ORDER BY a.service_date DESC''',(selected,))
         st.dataframe(history,hide_index=True,use_container_width=True) if history else st.info('No appointments recorded for this patient.')
         readings=hospital.records('''SELECT t.* FROM vitals t JOIN visits v USING(visit_id)
-            JOIN appointments a USING(appointment_id) WHERE a.patient_id=? ORDER BY t.vital_id DESC''',(selected,))
+            JOIN appointments a USING(appointment_id) WHERE a.patient_id=? ORDER BY t.vital_id DESC''',(selected,)) if staff['role']=='admin' else []
         if readings:
             st.subheader('Recorded vitals')
             st.dataframe(readings,hide_index=True)
@@ -152,6 +186,9 @@ elif page=='Care workspace':
         JOIN patients p USING(patient_id) LEFT JOIN doctors d ON d.doctor_id=v.assigned_doctor_id
         WHERE v.state NOT IN ('COMPLETED','TRANSFER_REQUIRED','ADMITTED')
         ORDER BY v.urgency,v.checked_in_at,v.rowid''')
+    visible={'nurse':{'ASSESSMENT'},'physician':{'CONSULTATION','DIAGNOSTICS'},'pharmacy':{'PHARMACY'}}
+    if staff['role']!='admin':
+        visits=[v for v in visits if v['state'] in visible.get(staff['role'],set())]
     if not visits:
         st.info('No active visits. Check in a confirmed appointment to begin.')
     for v in visits:
@@ -199,9 +236,10 @@ elif page=='Wards':
     for w in wards:
         st.subheader(w['name'])
         st.caption(f"Occupied: {w['occupied']} / {w['capacity']}")
-        capacity=st.number_input('Ward capacity',min_value=0,value=w['capacity'],key='cap'+str(w['ward_id']))
-        if st.button('Save capacity',key='savecap'+str(w['ward_id'])):
-            act(lambda:hospital.set_ward_capacity(w['ward_id'],capacity),'Ward capacity saved.')
+        if hospital.can('set_ward_capacity'):
+            capacity=st.number_input('Ward capacity',min_value=0,value=w['capacity'],key='cap'+str(w['ward_id']))
+            if st.button('Save capacity',key='savecap'+str(w['ward_id'])):
+                act(lambda:hospital.set_ward_capacity(w['ward_id'],capacity),'Ward capacity saved.')
         for v in hospital.records('''SELECT v.*,p.name FROM visits v JOIN appointments a USING(appointment_id)
             JOIN patients p USING(patient_id) WHERE v.state='ADMITTED' AND v.ward_id=?''',(w['ward_id'],)):
             with st.expander(v['name']+' · '+v['visit_id']):
@@ -235,3 +273,7 @@ else:
     st.subheader('Email delivery')
     st.caption('Sending is '+('configured' if notifications.configured() else 'disabled')+'. Run the v2 worker for unattended checks. ACCEPTED means provider acceptance, not confirmed inbox delivery. SENDING or REVIEW_REQUIRED needs provider verification before retrying.')
     st.dataframe(hospital.records('SELECT appointment_id,appointment_date,status,error_code,updated_at FROM notifications ORDER BY updated_at DESC LIMIT 100'),hide_index=True)
+    st.subheader('Staff audit')
+    st.dataframe(hospital.records('SELECT user_id,action,outcome,created_at FROM staff_audit ORDER BY audit_id DESC LIMIT 100'),hide_index=True)
+    st.caption('Event actor IDs identify the initiating staff account; null identifies older events or trusted maintenance. Background decisions retain their triggering event link.')
+    st.dataframe(hospital.records('SELECT event_id,kind,entity_id,actor_id,created_at FROM events ORDER BY event_id DESC LIMIT 100'),hide_index=True)

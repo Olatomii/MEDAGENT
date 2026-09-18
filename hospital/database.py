@@ -69,6 +69,8 @@ def initialize(path):
         ]
         for statement in statements:
             conn.execute(statement)
+        if 'actor_id' not in {r['name'] for r in conn.execute('PRAGMA table_info(events)')}:
+            conn.execute('ALTER TABLE events ADD COLUMN actor_id INTEGER')
         # Additive migration from the first foundation release; safe to rerun.
         additions = {
             'appointments': [('billing_status', "TEXT NOT NULL DEFAULT 'PENDING'"),

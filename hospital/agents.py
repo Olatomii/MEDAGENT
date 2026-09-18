@@ -4,8 +4,9 @@ from .database import connection
 
 
 def emit(conn, kind, entity_id, **payload):
-    return conn.execute('INSERT INTO events(kind,entity_id,payload) VALUES (?,?,?)',
-                        (kind,entity_id,json.dumps(payload))).lastrowid
+    from .access import actor
+    return conn.execute('INSERT INTO events(kind,entity_id,payload,actor_id) VALUES (?,?,?,?)',
+                        (kind,entity_id,json.dumps(payload),actor.get())).lastrowid
 
 
 def decision(conn, event, agent, entity, reason):

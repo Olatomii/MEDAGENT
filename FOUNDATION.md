@@ -2,6 +2,8 @@
 
 See `INTEGRATION.md` for the billing, vitals, ward and reminder integration,
 worker commands, migration behavior and delivery limitations.
+Staff sign-in is now required. Follow `STAFF_ACCESS.md` to provision the first
+administrator on the trusted host; there are no default accounts or passwords.
 
 This is a runnable next-version application, not a replacement deployment.
 Run `python -m streamlit run app_v2.py` from the repository directory.
@@ -96,7 +98,7 @@ Before replacing the existing app, remaining work includes:
 
 - A patient portal and email ownership verification.
 - Clinician working hours/leave, active consultation tracking and queue estimates.
-- Authentication, server-enforced roles and audit attribution before real patient use.
+- Deployment security review, MFA/SSO and stronger operational audit controls.
 - Persistent hosting, backup/restore checks and deployment of the managed worker.
 - Synthetic workload evaluation against a first-come-first-served baseline.
 
