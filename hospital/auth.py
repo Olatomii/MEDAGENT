@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import secrets
 import time
+import os
 from .database import connection
 
 ROLES=('admin','front_desk','nurse','physician','pharmacy','ward')
@@ -49,6 +50,24 @@ def create_staff(path,username,password,role):
                          (username,role,digest,salt)).lastrowid
         conn.execute("INSERT INTO staff_audit(user_id,action,outcome) VALUES (?,'HOST_CREATE_STAFF','SUCCESS')",(uid,))
         return uid
+
+
+def bootstrap_admin(path,setup_token,username,password):
+    configured=os.getenv('MEDAGENT_SETUP_TOKEN','')
+    if len(configured)<32 or not hmac.compare_digest(setup_token,configured):
+        raise AccessDenied('Administrator setup could not be authorized.')
+    username=username.strip().lower()
+    if not 3<=len(username)<=80 or not all(c.isalnum() or c in '._-' for c in username):
+        raise ValueError('Username must be 3–80 letters, digits, dots, underscores or hyphens.')
+    if not 12<=len(password)<=256:
+        raise ValueError('Password must contain 12–256 characters.')
+    salt=secrets.token_hex(16)
+    digest=password_digest(password,salt)
+    with connection(path,write=True) as conn:
+        if conn.execute('SELECT 1 FROM staff_users LIMIT 1').fetchone():
+            raise AccessDenied('Initial setup is already complete. Sign in or contact your administrator.')
+        uid=conn.execute("INSERT INTO staff_users(username,role,password_hash,salt) VALUES (?,'admin',?,?)",(username,digest,salt)).lastrowid
+        conn.execute("INSERT INTO staff_audit(user_id,action,outcome) VALUES (?,'BOOTSTRAP_ADMIN','SUCCESS')",(uid,))
 
 
 def login(path,username,password,now=None):

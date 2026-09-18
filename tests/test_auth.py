@@ -106,3 +106,14 @@ def test_password_reset_revokes_sessions_and_old_password(core):
     with pytest.raises(AccessDenied): authenticate(core.path,user._token)
     with pytest.raises(AccessDenied): login(core.path,'nurse',PASSWORD)
     assert login(core.path,'nurse','Replacement-test-password')
+
+
+def test_protected_first_admin_setup(core,monkeypatch):
+    from hospital.auth import bootstrap_admin
+    code='test-only-setup-code-with-strong-length-12345'
+    monkeypatch.setenv('MEDAGENT_SETUP_TOKEN',code)
+    with pytest.raises(AccessDenied): bootstrap_admin(core.path,'wrong','owner',PASSWORD)
+    assert not core.records('SELECT * FROM staff_users')
+    bootstrap_admin(core.path,code,'owner',PASSWORD)
+    assert authenticate(core.path,login(core.path,'owner',PASSWORD))['role']=='admin'
+    with pytest.raises(AccessDenied): bootstrap_admin(core.path,code,'second-owner',PASSWORD)
