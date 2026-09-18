@@ -63,9 +63,16 @@ def import_snapshot(hospital, source):
                             raise ValueError('Unknown legacy status: '+str(old_status))
                     conn.execute('INSERT INTO appointments(appointment_id,patient_id,service_date,specialty,urgency,doctor_id,status,reminder_opt_in) VALUES (?,?,?,?,?,?,?,?)',
                         (appointment_id,patient_id,data['booking_date'],specialty,data['triage_level'],doctor_id,status,data.get('reminder_opt_in',0)))
+                    billing='EXEMPT' if data['triage_level'] in (1,2) else ('CLEARED' if data.get('payment_status')=='Cleared' else 'PENDING')
+                    conn.execute('UPDATE appointments SET billing_status=? WHERE appointment_id=?',(billing,appointment_id))
                     if state:
-                        conn.execute('INSERT INTO visits(visit_id,appointment_id,state,notes) VALUES (?,?,?,?)',
-                            (identifier('V'),appointment_id,state,data.get('notes') or ''))
+                        ward=None
+                        if state=='ADMITTED':
+                            ward=conn.execute('SELECT ward_id FROM wards WHERE name=?',(data['location'],)).fetchone()
+                            if ward is None:
+                                raise ValueError('Unknown legacy ward; review the source before import.')
+                        conn.execute('INSERT INTO visits(visit_id,appointment_id,state,notes,assigned_doctor_id,urgency,ward_id) VALUES (?,?,?,?,?,?,?)',
+                            (identifier('V'),appointment_id,state,data.get('notes') or '',doctor_id,data['triage_level'],ward[0] if ward else None))
                     conn.execute('INSERT INTO legacy_imports VALUES (?,?,?,?)',(str(source),table,data['source_row'],appointment_id))
                     conn.execute('INSERT INTO legacy_records VALUES (?,?)',(appointment_id,original))
                     emit(conn,'LEGACY_IMPORTED',appointment_id,reason='Imported original record without merging patient identities; source snapshot retained.')

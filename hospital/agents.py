@@ -14,6 +14,8 @@ def decision(conn, event, agent, entity, reason):
 
 
 def available_doctor(conn, specialty, date):
+    if specialty == 'Emergency / Trauma':
+        return emergency_doctor(conn,date)
     # Fulfilled appointments still consume the session's booking allocation.
     # Completing a visit does not create a new bookable appointment.
     return conn.execute('''SELECT s.doctor_id,s.capacity,COUNT(a.appointment_id) AS booked
@@ -23,6 +25,19 @@ def available_doctor(conn, specialty, date):
         WHERE d.specialty=? AND s.service_date=?
         GROUP BY s.doctor_id HAVING booked<s.capacity ORDER BY booked,s.doctor_id LIMIT 1''',
         (specialty,date)).fetchone()
+
+
+def emergency_doctor(conn,date):
+    # Emergency session capacity means concurrent places, including reservations
+    # and unresolved visits from earlier dates. Admission/completion releases it.
+    return conn.execute('''SELECT s.doctor_id,s.capacity,
+        ((SELECT COUNT(*) FROM appointments a WHERE a.doctor_id=s.doctor_id
+            AND a.specialty='Emergency / Trauma' AND a.status='CONFIRMED') +
+         (SELECT COUNT(*) FROM visits v WHERE v.assigned_doctor_id=s.doctor_id
+            AND v.state NOT IN ('ADMITTED','COMPLETED','TRANSFER_REQUIRED'))) AS booked
+        FROM sessions s JOIN doctors d USING(doctor_id)
+        WHERE d.specialty='Emergency / Trauma' AND s.service_date=?
+        AND s.capacity>0 AND booked<s.capacity ORDER BY booked,s.doctor_id LIMIT 1''',(date,)).fetchone()
 
 
 class WaitlistAgent:
@@ -71,6 +86,16 @@ class AppointmentAgent:
             decision(conn,event['event_id'],self.name,event['entity_id'],data['reason'])
 
 
+class ClinicalSupportAgent:
+    def handle(self,conn,event,data):
+        agents={'VITALS_RECORDED':'Clinical prep agent','WARD_ADMITTED':'Ward agent',
+                'WARD_DISCHARGED':'Ward agent','WARD_CAPACITY_CHANGED':'Ward agent',
+                'BILLING_CLEARED':'Billing agent','REMINDER_ACCEPTED':'Reminder agent',
+                'REMINDER_REVIEW_REQUIRED':'Reminder agent','REMINDER_PREFERENCE_CHANGED':'Reminder agent'}
+        if event['kind'] in agents:
+            decision(conn,event['event_id'],agents[event['kind']],event['entity_id'],data['reason'])
+
+
 def process_events(path, limit=100):
     processed = 0
     for _ in range(limit):
@@ -82,7 +107,7 @@ def process_events(path, limit=100):
                     break
                 event_id = event['event_id']
                 data = json.loads(event['payload'])
-                for agent in (AppointmentAgent(),WaitlistAgent(),CareCoordinationAgent()):
+                for agent in (AppointmentAgent(),WaitlistAgent(),CareCoordinationAgent(),ClinicalSupportAgent()):
                     agent.handle(conn,event,data)
                 conn.execute('UPDATE events SET processed_at=CURRENT_TIMESTAMP,error=NULL,attempts=attempts+1 WHERE event_id=?',(event_id,))
                 processed += 1

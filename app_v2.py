@@ -5,6 +5,8 @@ from pathlib import Path
 import streamlit as st
 from hospital.service import Hospital, TRANSITIONS
 from hospital.agents import process_events
+from hospital import notifications
+from reminders import valid_email
 
 st.set_page_config(page_title='MedAgent | Patient workspace',page_icon='✚',layout='wide')
 st.markdown('<style>'+Path(__file__).with_name('style.css').read_text()+'</style>',unsafe_allow_html=True)
@@ -12,7 +14,7 @@ hospital=Hospital(os.getenv('MEDAGENT_V2_DB_PATH','medagent_v2.db'))
 process_events(hospital.path)
 st.sidebar.title('MedAgent Sync')
 st.sidebar.caption('Patient & agent workspace')
-page=st.sidebar.radio('Workspace',['Patients','Appointments','Care workspace','Doctor sessions','Agent decisions'])
+page=st.sidebar.radio('Workspace',['Patients','Appointments','Care workspace','Wards','Doctor sessions','Agent decisions'])
 st.sidebar.info('Development version · separate patient database')
 st.title(page)
 if st.session_state.get('feedback'):
@@ -40,6 +42,9 @@ if page=='Patients':
         age=left.number_input('Age',min_value=0,max_value=120,value=30)
         gender=right.selectbox('Gender',['Male','Female','Other / not specified'])
         email=st.text_input('Email address (optional)')
+        suggestion=notifications.suggested_email(email)
+        if suggestion:
+            st.warning('Check the spelling: did you mean '+suggestion+'? The address is not changed automatically.')
         if st.form_submit_button('Create patient',type='primary'):
             act(lambda:hospital.create_patient(name,age,gender,email),'Patient created. ID:')
     search=st.text_input('Find a patient by name or ID')
@@ -47,14 +52,27 @@ if page=='Patients':
     if filtered:
         st.dataframe(filtered,hide_index=True,use_container_width=True)
         selected=st.selectbox('Patient history',[p['patient_id'] for p in filtered],format_func=patient_names.get)
+        contact=next(p for p in filtered if p['patient_id']==selected)
+        edited_email=st.text_input('Update patient email',value=contact['email'],key='email'+selected+contact['email'])
+        suggestion=notifications.suggested_email(edited_email)
+        if suggestion:
+            st.warning('Did you mean '+suggestion+'?')
+        st.caption('Changing the address clears reminder consent on unstarted appointments. Confirm consent again under Appointments.')
+        if st.button('Save email'):
+            act(lambda:hospital.update_email(selected,contact['email'],edited_email),'Email saved.')
         history=hospital.records('''SELECT a.appointment_id,a.service_date,a.specialty,a.status,v.visit_id,v.state,v.notes
             FROM appointments a LEFT JOIN visits v USING(appointment_id) WHERE a.patient_id=? ORDER BY a.service_date DESC''',(selected,))
         st.dataframe(history,hide_index=True,use_container_width=True) if history else st.info('No appointments recorded for this patient.')
+        readings=hospital.records('''SELECT t.* FROM vitals t JOIN visits v USING(visit_id)
+            JOIN appointments a USING(appointment_id) WHERE a.patient_id=? ORDER BY t.vital_id DESC''',(selected,))
+        if readings:
+            st.subheader('Recorded vitals')
+            st.dataframe(readings,hide_index=True)
     else:
         st.info('No matching patient records.')
 
 elif page=='Doctor sessions':
-    st.caption('Set the number of bookings a doctor can accept on a date. Consultation duration is not fixed. New dates start with no configured capacity.')
+    st.caption('Routine capacity is the number of bookings for a date. Emergency capacity is simultaneous places, including unresolved earlier visits. Consultation duration is not fixed; configure each staffed date.')
     names={d['doctor_id']:d['name']+' · '+d['specialty'] for d in doctors}
     with st.form('session'):
         doctor=st.selectbox('Doctor',list(names),format_func=names.get)
@@ -73,9 +91,22 @@ elif page=='Appointments':
         date=st.date_input('Appointment date',min_value=dt.date.fromisoformat(hospital.today()))
         specialty=st.selectbox('Department',sorted({d['specialty'] for d in doctors}))
         urgency=st.selectbox('Staff-assigned urgency',[1,2] if specialty=='Emergency / Trauma' else [3,4,5])
-        st.caption('Email sending is not connected to this development database yet. The existing preview reminder service is separate.')
+        reminder_opt_in=False
+        if specialty!='Emergency / Trauma' and date.isoformat()>hospital.today():
+            reminder_opt_in=st.checkbox('Patient agrees to an email reminder')
+            selected_patient=next(p for p in patients if p['patient_id']==patient)
+            if reminder_opt_in:
+                st.caption('Reminder recipient: '+(selected_patient['email'] or 'No email recorded'))
+                if not valid_email(selected_patient['email']):
+                    st.error('A valid patient email is required before opting in.')
+                suggestion=notifications.suggested_email(selected_patient['email'])
+                if suggestion:
+                    st.warning('Did you mean '+suggestion+'? Correct the patient email before booking if necessary.')
+            st.caption('One reminder the day before a confirmed, billing-cleared appointment, after 9 am in the configured reminder timezone.')
+        if not notifications.configured():
+            st.info('Email delivery for this development version is not activated. Consent can still be recorded.')
         if st.button('Book appointment',type='primary'):
-            act(lambda:hospital.book(patient,date.isoformat(),specialty,urgency),'Booking recorded. Check its confirmation status below. ID:')
+            act(lambda:hospital.book(patient,date.isoformat(),specialty,urgency,reminder_opt_in),'Booking recorded. Check its confirmation status below. ID:')
     bookings=hospital.records('''SELECT a.*,p.name,d.name AS doctor FROM appointments a JOIN patients p USING(patient_id)
         LEFT JOIN doctors d ON d.doctor_id=a.doctor_id ORDER BY service_date DESC,a.rowid DESC''')
     st.subheader('Bookings')
@@ -84,6 +115,19 @@ elif page=='Appointments':
     for a in bookings:
         with st.expander(f"{a['name']} · {a['service_date']} · {a['status']}"):
             st.caption(f"{a['appointment_id']} · {a['specialty']} · {a['doctor'] or 'Awaiting allocation'}")
+            st.caption('Billing: '+a['billing_status']+' · Email reminder: '+('opted in' if a['reminder_opt_in'] else 'off'))
+            if a['status'] in ('CONFIRMED','WAITLISTED'):
+                if a['billing_status']=='PENDING':
+                    reference=st.text_input('Billing reference / staff record',key='billing'+a['appointment_id'])
+                    if st.button('Record billing clearance',key='clear'+a['appointment_id']):
+                        act(lambda:hospital.clear_billing(a['appointment_id'],reference),'Billing clearance recorded. No payment was charged by this application.')
+                if a['reminder_opt_in']:
+                    if st.button('Withdraw reminder consent',key='optout'+a['appointment_id']):
+                        act(lambda:hospital.reminder_preference(a['appointment_id'],False),'Reminder consent withdrawn.')
+                elif a['urgency']>2 and a['service_date']>hospital.today():
+                    consent=st.checkbox('Patient agrees to reminders for this appointment',key='consent'+a['appointment_id'])
+                    if st.button('Enable reminder',key='optin'+a['appointment_id'],disabled=not consent):
+                        act(lambda:hospital.reminder_preference(a['appointment_id'],True),'Reminder consent recorded.')
             if a['status']=='CONFIRMED' and a['service_date']==hospital.today():
                 if st.button('Check in',key='in'+a['appointment_id']):
                     act(lambda:hospital.check_in(a['appointment_id']),'Patient checked in. Visit:')
@@ -96,20 +140,77 @@ elif page=='Appointments':
 
 elif page=='Care workspace':
     st.caption('Only checked-in patients appear here. Clinical actions are chosen by staff; the system validates each transition.')
-    visits=hospital.records('''SELECT v.*,a.urgency,a.specialty,p.name FROM visits v JOIN appointments a USING(appointment_id)
-        JOIN patients p USING(patient_id) WHERE v.state NOT IN ('COMPLETED','TRANSFER_REQUIRED')
-        ORDER BY a.urgency,v.checked_in_at,v.rowid''')
+    visits=hospital.records('''SELECT v.*,d.specialty,p.name,d.name AS doctor FROM visits v JOIN appointments a USING(appointment_id)
+        JOIN patients p USING(patient_id) LEFT JOIN doctors d ON d.doctor_id=v.assigned_doctor_id
+        WHERE v.state NOT IN ('COMPLETED','TRANSFER_REQUIRED','ADMITTED')
+        ORDER BY v.urgency,v.checked_in_at,v.rowid''')
     if not visits:
         st.info('No active visits. Check in a confirmed appointment to begin.')
     for v in visits:
         with st.expander(f"{v['name']} · {v['state']} · urgency {v['urgency']}",expanded=True):
-            st.caption(v['visit_id']+' · '+v['specialty'])
+            st.caption(v['visit_id']+' · '+str(v['specialty'])+' · '+str(v['doctor']))
             st.text(v['notes'] or 'No clinical notes recorded.')
+            readings=hospital.records('SELECT systolic,temperature,heart_rate,spo2,respiratory_rate,flagged,recorded_at FROM vitals WHERE visit_id=? ORDER BY vital_id DESC',(v['visit_id'],))
+            if readings:
+                st.dataframe(readings,hide_index=True)
             widget_id=v['visit_id']+str(v['version'])
+            if v['state']=='ASSESSMENT':
+                st.caption('Prototype vital-sign routing rules are for simulation; staff must assess clinical urgency.')
+                with st.form('vitals'+widget_id):
+                    c1,c2=st.columns(2)
+                    bp=c1.number_input('Systolic BP (mmHg)',min_value=0,max_value=300,value=120)
+                    temperature=c2.number_input('Temperature (°C)',min_value=20.0,max_value=45.0,value=37.0)
+                    pulse=c1.number_input('Heart rate (bpm)',min_value=0,max_value=250,value=75)
+                    oxygen=c2.number_input('SpO2 (%)',min_value=0,max_value=100,value=98)
+                    respiration=c1.number_input('Respiratory rate',min_value=0,max_value=60,value=16)
+                    if st.form_submit_button('Record vitals and route',type='primary'):
+                        act(lambda:hospital.record_vitals(v['visit_id'],v['version'],bp,temperature,pulse,oxygen,respiration),'Vitals recorded. Review the updated care state or transfer queue.')
+                continue
             target=st.selectbox('Next care step',sorted(TRANSITIONS[v['state']]),key='target'+widget_id)
-            notes=st.text_area('Staff notes / directive',key='notes'+widget_id)
+            notes=st.text_area('Diagnostic results' if v['state']=='DIAGNOSTICS' else 'Staff notes / prescription / directive',key='notes'+widget_id)
+            ward=None
+            if target=='ADMITTED':
+                wards=hospital.records('SELECT * FROM wards ORDER BY ward_id')
+                names={w['ward_id']:w['name'] for w in wards}
+                ward=st.selectbox('Ward selected by staff',list(names),format_func=names.get,key='ward'+widget_id)
             if st.button('Record care step',key='move'+widget_id,type='primary'):
-                act(lambda:hospital.transition(v['visit_id'],v['version'],target,notes),'Care step recorded.')
+                if target=='ADMITTED':
+                    act(lambda:hospital.admit(v['visit_id'],v['version'],ward,notes),'Ward admission recorded.')
+                else:
+                    act(lambda:hospital.transition(v['visit_id'],v['version'],target,notes),'Care step recorded.')
+    transfers=hospital.records('''SELECT p.name,v.visit_id,v.notes FROM visits v JOIN appointments a USING(appointment_id)
+        JOIN patients p USING(patient_id) WHERE v.state='TRANSFER_REQUIRED' ''')
+    if transfers:
+        st.warning('Transfer-required records: these indicate a need for staff action, not a completed external transfer.')
+        st.dataframe(transfers,hide_index=True)
+
+elif page=='Wards':
+    wards=hospital.records('''SELECT w.*,COUNT(v.visit_id) AS occupied FROM wards w LEFT JOIN visits v
+        ON v.ward_id=w.ward_id AND v.state='ADMITTED' GROUP BY w.ward_id ORDER BY w.ward_id''')
+    st.caption('Configure capacity before admission. A place is released when staff record discharge or transfer.')
+    for w in wards:
+        st.subheader(w['name'])
+        st.caption(f"Occupied: {w['occupied']} / {w['capacity']}")
+        capacity=st.number_input('Ward capacity',min_value=0,value=w['capacity'],key='cap'+str(w['ward_id']))
+        if st.button('Save capacity',key='savecap'+str(w['ward_id'])):
+            act(lambda:hospital.set_ward_capacity(w['ward_id'],capacity),'Ward capacity saved.')
+        for v in hospital.records('''SELECT v.*,p.name FROM visits v JOIN appointments a USING(appointment_id)
+            JOIN patients p USING(patient_id) WHERE v.state='ADMITTED' AND v.ward_id=?''',(w['ward_id'],)):
+            with st.expander(v['name']+' · '+v['visit_id']):
+                key=v['visit_id']+str(v['version'])
+                notes=st.text_area('Discharge / transfer notes',key='disnotes'+key)
+                outcome=st.selectbox('Outcome',['COMPLETED','TRANSFER_REQUIRED'],key='outcome'+key)
+                if st.button('End ward stay',key='discharge'+key):
+                    act(lambda:hospital.transition(v['visit_id'],v['version'],outcome,notes),'Ward stay ended; bed released.')
+    unresolved=hospital.records("SELECT visit_id,version FROM visits WHERE state='ADMITTED' AND ward_id IS NULL")
+    if unresolved:
+        st.warning('Some older v2 admissions have no ward assignment. These need reconciliation before relying on occupancy totals.')
+        st.dataframe(unresolved,hide_index=True)
+        for v in unresolved:
+            ward=st.selectbox('Reconcile ward for '+v['visit_id'],[w['ward_id'] for w in wards],
+                              format_func=lambda wid:next(w['name'] for w in wards if w['ward_id']==wid),key='reconcile'+v['visit_id'])
+            if st.button('Assign existing admission',key='assign'+v['visit_id']+str(v['version'])):
+                act(lambda:hospital.admit(v['visit_id'],v['version'],ward),'Existing admission assigned to ward.')
 
 else:
     st.caption('Events and decisions are persisted. Pending events resume on the next page interaction or when the dispatcher is run. No autonomous background worker is claimed in this version.')
@@ -123,3 +224,6 @@ else:
         st.success('All recorded events have been processed.')
     st.subheader('Decision history')
     st.dataframe(hospital.records('SELECT created_at,agent,entity_id,reason,event_id FROM decisions ORDER BY decision_id DESC LIMIT 200'),hide_index=True,use_container_width=True)
+    st.subheader('Email delivery')
+    st.caption('Sending is '+('configured' if notifications.configured() else 'disabled')+'. Run the v2 worker for unattended checks. ACCEPTED means provider acceptance, not confirmed inbox delivery. SENDING or REVIEW_REQUIRED needs provider verification before retrying.')
+    st.dataframe(hospital.records('SELECT appointment_id,appointment_date,status,error_code,updated_at FROM notifications ORDER BY updated_at DESC LIMIT 100'),hide_index=True)

@@ -1,4 +1,7 @@
-# Patient and agent foundation — development milestone 1
+# Patient and agent foundation — integrated development version
+
+See `INTEGRATION.md` for the billing, vitals, ward and reminder integration,
+worker commands, migration behavior and delivery limitations.
 
 This is a runnable next-version application, not a replacement deployment.
 Run `python -m streamlit run app_v2.py` from the repository directory.
@@ -11,18 +14,22 @@ Do not point it at the original database. Use synthetic data while developing.
 1. In Patients, create a record and retain its permanent patient ID.
 2. In Doctor sessions, configure a doctor's booking capacity for today.
 3. In Appointments, select that patient ID and book the matching department.
-4. Check in the confirmed booking. Only now is a separate visit created.
-5. In Care workspace, progress from assessment to consultation, then diagnostics,
+4. Record routine billing clearance with a staff reference, then check in the
+   confirmed booking. Emergencies bypass billing. Only check-in creates a visit.
+5. In Care workspace, record vital signs to complete assessment, then consultation, diagnostics,
    pharmacy, admission, completion, or transfer as permitted by the state rules.
 6. Open Patients again to review the patient's linked booking and visit history.
 7. Fill a session and create another booking to produce a waitlist entry. Cancel
    an unstarted confirmed booking: the waitlist agent allocates the released place.
-   Agent decisions shows the triggering event and selection reason.
+   Agent decisions shows the triggering event and selection reason. Configure
+   ward capacity under Wards before admission; discharge releases the place.
 
 No fixed consultation length is imposed. Session capacity is a booking quota,
 not a prediction of the number of consultations that will actually finish.
-Completed visits continue to consume their original booking allocation. Live
-clinician occupancy, leave, breaks and mid-session reassignment are future work.
+Completed routine visits continue to consume their original booking allocation.
+Emergency session capacity instead represents concurrent places across dates;
+admission, completion or transfer-required routing releases an emergency place.
+Live routine clinician occupancy, leave, breaks and reassignment are future work.
 
 ## Data and agent boundaries
 
@@ -36,7 +43,8 @@ clinician occupancy, leave, breaks and mid-session reassignment are future work.
 - `hospital/agents.py`: appointment, waitlist and care-coordination handlers.
 
 The dispatcher is synchronous, with durable recovery. It runs after service
-commands and on page interactions. A separate unattended worker is **not** running.
+commands and on page interactions. A separate unattended worker is available but
+is **not** deployed; see `INTEGRATION.md` for its command and persistence requirements.
 For a one-shot recovery run:
 
 ```sh
@@ -52,7 +60,7 @@ cover database effects, not external messages or email delivery.
 Care transitions require the expected record version and a permitted source state.
 Completed and transferred visits cannot return to a care queue. UI action keys
 include that version so an old displayed action is not reused after a transition.
-Urgency is assigned by staff, not inferred by a clinical model. Emergency intake
+Urgency is assigned by staff or the original simulation's vital-sign rules, not a validated clinical model. Emergency intake
 cannot be scheduled for a future date or silently enter a routine waitlist.
 
 ## Legacy import
@@ -86,12 +94,10 @@ priority promotion, recovery after a handler failure, and read-only legacy impor
 
 Before replacing the existing app, remaining work includes:
 
-- Reconnect the established vitals, billing, detailed ward and reminder workflows.
-  This entry point deliberately does not start the original reminder thread.
-- Appointment rescheduling, contact editing and consent controls; patient portal.
+- Appointment rescheduling, a patient portal and email ownership verification.
 - Clinician working hours/leave, active consultation tracking and queue estimates.
 - Authentication, server-enforced roles and audit attribution before real patient use.
-- Persistent hosting, backup/restore checks and a separately managed event worker.
+- Persistent hosting, backup/restore checks and deployment of the managed worker.
 - Synthetic workload evaluation against a first-come-first-served baseline.
 
 Existing group history remains in Git; this development milestone adds new modules

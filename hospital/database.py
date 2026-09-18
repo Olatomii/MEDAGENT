@@ -69,6 +69,37 @@ def initialize(path):
         ]
         for statement in statements:
             conn.execute(statement)
+        # Additive migration from the first foundation release; safe to rerun.
+        additions = {
+            'appointments': [('billing_status', "TEXT NOT NULL DEFAULT 'PENDING'"),
+                             ('billing_reference', "TEXT NOT NULL DEFAULT ''")],
+            'visits': [('assigned_doctor_id', 'INTEGER REFERENCES doctors(doctor_id)'),
+                       ('urgency', 'INTEGER'), ('ward_id', 'INTEGER REFERENCES wards(ward_id)')],
+        }
+        conn.execute('''CREATE TABLE IF NOT EXISTS wards (
+            ward_id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+            capacity INTEGER NOT NULL CHECK(capacity>=0))''')
+        for table, columns in additions.items():
+            existing={r['name'] for r in conn.execute(f'PRAGMA table_info({table})')}
+            for name, definition in columns:
+                if name not in existing:
+                    conn.execute(f'ALTER TABLE {table} ADD COLUMN {name} {definition}')
+        conn.execute("UPDATE appointments SET billing_status='EXEMPT' WHERE urgency IN (1,2)")
+        conn.execute('''UPDATE visits SET assigned_doctor_id=(SELECT doctor_id FROM appointments a WHERE a.appointment_id=visits.appointment_id)
+            WHERE assigned_doctor_id IS NULL''')
+        conn.execute('''UPDATE visits SET urgency=(SELECT urgency FROM appointments a WHERE a.appointment_id=visits.appointment_id)
+            WHERE urgency IS NULL''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS vitals (
+            vital_id INTEGER PRIMARY KEY, visit_id TEXT NOT NULL REFERENCES visits,
+            systolic REAL NOT NULL, temperature REAL NOT NULL, heart_rate REAL NOT NULL,
+            spo2 REAL NOT NULL, respiratory_rate REAL NOT NULL, flagged INTEGER NOT NULL,
+            recorded_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS notifications (
+            reminder_key TEXT PRIMARY KEY, appointment_id TEXT NOT NULL REFERENCES appointments,
+            appointment_date TEXT NOT NULL, status TEXT NOT NULL,
+            provider_id TEXT, error_code TEXT, updated_at TEXT NOT NULL)''')
+        for ward_id, name in [(1,'Male Ward'),(2,'Female Ward'),(3,"Children's Ward")]:
+            conn.execute('INSERT OR IGNORE INTO wards VALUES (?,?,0)',(ward_id,name))
         for i, name, specialty in [(1,'Dr. Smith','General Practice'),(2,'Dr. Taylor','General Practice'),
                 (3,'Dr. Jones','Cardiology'),(4,'Dr. Davis','Cardiology'),(5,'Dr. Brown','Orthopedics'),
                 (6,'Dr. Wilson','Orthopedics'),(7,'Dr. Evans','Emergency / Trauma'),

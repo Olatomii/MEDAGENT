@@ -19,7 +19,9 @@ def patient(h,name='Test Patient'):
 
 def booked(h):
     h.set_session(1,'2026-10-01',1)
-    return h.book(patient(h),'2026-10-01','General Practice')
+    a=h.book(patient(h),'2026-10-01','General Practice')
+    h.clear_billing(a,'Test clearance')
+    return a
 
 
 def test_patient_identity_is_not_name_matching(h):
@@ -51,11 +53,11 @@ def test_cannot_check_in_future_or_waitlisted(h):
 
 def test_stale_and_terminal_transitions_rejected(h):
     v=h.check_in(booked(h))
-    h.transition(v,0,'CONSULTATION','Vitals reviewed')
+    h.record_vitals(v,0,120,37,75,98,16)
     with pytest.raises(Conflict): h.transition(v,0,'DIAGNOSTICS')
     h.transition(v,1,'COMPLETED')
     with pytest.raises(Conflict): h.transition(v,2,'DIAGNOSTICS')
-    assert h.records('SELECT * FROM visits')[0]['notes']=='\nVitals reviewed'
+    assert 'Vitals recorded' in h.records('SELECT * FROM visits')[0]['notes']
 
 
 def test_cancel_fills_capacity_and_event_replay_does_not_duplicate(h):
@@ -75,7 +77,7 @@ def test_completion_does_not_release_booking_allocation(h):
     a=booked(h)
     waiting=h.book(patient(h),'2026-10-01','General Practice')
     v=h.check_in(a)
-    h.transition(v,0,'CONSULTATION')
+    h.record_vitals(v,0,120,37,75,98,16)
     h.transition(v,1,'COMPLETED')
     assert h.records('SELECT status FROM appointments WHERE appointment_id=?',(waiting,))[0]['status']=='WAITLISTED'
     with pytest.raises(Conflict): h.set_session(1,'2026-10-01',0)

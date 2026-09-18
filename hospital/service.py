@@ -3,10 +3,8 @@ from zoneinfo import ZoneInfo
 from .database import connection, identifier, initialize
 from .agents import emit, available_doctor, process_events
 from reminders import valid_email
-
-
-class Conflict(ValueError):
-    """A stale or invalid command; callers must refresh the record."""
+from .clinical import ClinicalCare
+from .errors import Conflict
 
 
 TRANSITIONS = {
@@ -19,7 +17,7 @@ TRANSITIONS = {
 }
 
 
-class Hospital:
+class Hospital(ClinicalCare):
     def __init__(self,path,today=None):
         self.path=path
         self.today=today or (lambda:dt.datetime.now(ZoneInfo('Africa/Lagos')).date().isoformat())
@@ -49,6 +47,11 @@ class Hospital:
             if doctor is None:
                 raise ValueError('Doctor not found.')
             booked=conn.execute("SELECT COUNT(*) FROM appointments WHERE doctor_id=? AND service_date=? AND status IN ('CONFIRMED','CHECKED_IN','FULFILLED')",(doctor_id,date)).fetchone()[0]
+            if doctor['specialty']=='Emergency / Trauma':
+                booked=conn.execute('''SELECT
+                    (SELECT COUNT(*) FROM appointments WHERE doctor_id=? AND specialty='Emergency / Trauma' AND status='CONFIRMED') +
+                    (SELECT COUNT(*) FROM visits WHERE assigned_doctor_id=? AND state NOT IN ('ADMITTED','COMPLETED','TRANSFER_REQUIRED'))''',
+                    (doctor_id,doctor_id)).fetchone()[0]
             if capacity<booked:
                 raise Conflict('Capacity cannot be below existing allocations. Resolve affected bookings first.')
             conn.execute('INSERT INTO sessions VALUES (?,?,?) ON CONFLICT(doctor_id,service_date) DO UPDATE SET capacity=excluded.capacity',
@@ -70,8 +73,8 @@ class Hospital:
             patient=conn.execute('SELECT * FROM patients WHERE patient_id=?',(patient_id,)).fetchone()
             if patient is None:
                 raise ValueError('Select an existing patient ID.')
-            if reminder_opt_in and (emergency or not valid_email(patient['email'])):
-                raise ValueError('Reminder consent requires a routine appointment and a valid patient email.')
+            if reminder_opt_in and (emergency or date<=self.today() or not valid_email(patient['email'])):
+                raise ValueError('Reminder consent requires a future routine appointment and a valid patient email.')
             if not conn.execute('SELECT 1 FROM doctors WHERE specialty=?',(specialty,)).fetchone():
                 raise ValueError('Unknown department.')
             if conn.execute("SELECT 1 FROM appointments WHERE patient_id=? AND service_date=? AND specialty=? AND status IN ('CONFIRMED','WAITLISTED','CHECKED_IN')",(patient_id,date,specialty)).fetchone():
@@ -83,6 +86,8 @@ class Hospital:
             status='CONFIRMED' if doctor else 'WAITLISTED'
             conn.execute('INSERT INTO appointments(appointment_id,patient_id,service_date,specialty,urgency,doctor_id,status,reminder_opt_in) VALUES (?,?,?,?,?,?,?,?)',
                          (appointment_id,patient_id,date,specialty,urgency,doctor['doctor_id'] if doctor else None,status,int(reminder_opt_in)))
+            if emergency:
+                conn.execute("UPDATE appointments SET billing_status='EXEMPT' WHERE appointment_id=?",(appointment_id,))
             emit(conn,'APPOINTMENT_'+status,appointment_id,reason=(
                 'Allocated to an available doctor session.' if doctor else 'No remaining session places; added to the department waitlist.'))
         process_events(self.path)
@@ -107,8 +112,11 @@ class Hospital:
             a=conn.execute('SELECT * FROM appointments WHERE appointment_id=?',(appointment_id,)).fetchone()
             if a is None or a['status']!='CONFIRMED' or a['service_date']!=self.today():
                 raise Conflict('Check-in requires a confirmed appointment for today.')
+            if a['urgency'] not in (1,2) and a['billing_status']!='CLEARED':
+                raise Conflict('Routine check-in requires recorded billing clearance. Emergency care is exempt.')
             state='CONSULTATION' if a['urgency'] in (1,2) else 'ASSESSMENT'
-            conn.execute('INSERT INTO visits(visit_id,appointment_id,state) VALUES (?,?,?)',(visit_id,appointment_id,state))
+            conn.execute('INSERT INTO visits(visit_id,appointment_id,state,assigned_doctor_id,urgency) VALUES (?,?,?,?,?)',
+                         (visit_id,appointment_id,state,a['doctor_id'],a['urgency']))
             conn.execute("UPDATE appointments SET status='CHECKED_IN' WHERE appointment_id=?",(appointment_id,))
             emit(conn,'VISIT_STARTED',visit_id,reason='Arrival confirmed by staff. Routed to '+state.lower()+'.')
         process_events(self.path)
@@ -121,6 +129,12 @@ class Hospital:
                 raise Conflict('This visit changed. Refresh before taking another action.')
             if target not in TRANSITIONS[visit['state']]:
                 raise Conflict('This transition is not allowed from '+visit['state']+'.')
+            if visit['state']=='ASSESSMENT' and target=='CONSULTATION':
+                raise Conflict('Record vital signs to complete the assessment.')
+            if target=='ADMITTED':
+                raise Conflict('Use ward admission to reserve an available bed.')
+            if visit['state']=='DIAGNOSTICS' and not notes.strip():
+                raise ValueError('Record the diagnostic results before returning to consultation.')
             terminal=target in ('COMPLETED','TRANSFER_REQUIRED')
             conn.execute('''UPDATE visits SET state=?,version=version+1,notes=notes||?,
                 completed_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END WHERE visit_id=?''',
@@ -128,4 +142,33 @@ class Hospital:
             if terminal:
                 conn.execute("UPDATE appointments SET status='FULFILLED' WHERE appointment_id=?",(visit['appointment_id'],))
             emit(conn,'VISIT_TRANSITIONED',visit_id,reason=f"Staff requested {visit['state']} → {target}; validated against the current state and version.")
+            if visit['state']=='ADMITTED':
+                emit(conn,'WARD_DISCHARGED',visit_id,reason='Staff ended the ward stay; the ward place is now available.')
+        process_events(self.path)
+
+    def reminder_preference(self,appointment_id,enabled):
+        with connection(self.path,write=True) as conn:
+            a=conn.execute('''SELECT a.*,p.email FROM appointments a JOIN patients p USING(patient_id)
+                WHERE appointment_id=?''',(appointment_id,)).fetchone()
+            if a is None or a['status'] not in ('CONFIRMED','WAITLISTED'):
+                raise Conflict('Only unstarted bookings can change reminder preferences.')
+            if enabled and (a['urgency'] in (1,2) or not valid_email(a['email']) or a['service_date']<=self.today()):
+                raise ValueError('Reminders require a future routine appointment and a valid patient email.')
+            conn.execute('UPDATE appointments SET reminder_opt_in=? WHERE appointment_id=?',(int(enabled),appointment_id))
+            emit(conn,'REMINDER_PREFERENCE_CHANGED',appointment_id,reason='Patient reminder consent '+('enabled.' if enabled else 'withdrawn.'))
+        process_events(self.path)
+
+    def update_email(self,patient_id,expected_email,email):
+        email=email.strip()
+        if email and not valid_email(email):
+            raise ValueError('Enter a valid email address or leave it blank.')
+        with connection(self.path,write=True) as conn:
+            patient=conn.execute('SELECT email FROM patients WHERE patient_id=?',(patient_id,)).fetchone()
+            if patient is None or patient['email']!=expected_email:
+                raise Conflict('The contact record changed. Refresh before editing.')
+            if email==expected_email:
+                return
+            conn.execute('UPDATE patients SET email=? WHERE patient_id=?',(email,patient_id))
+            conn.execute("UPDATE appointments SET reminder_opt_in=0 WHERE patient_id=? AND status IN ('CONFIRMED','WAITLISTED')",(patient_id,))
+            emit(conn,'REMINDER_PREFERENCE_CHANGED',patient_id,reason='Email updated by staff; existing unstarted reminder consents cleared. Confirm consent for the new address.')
         process_events(self.path)
