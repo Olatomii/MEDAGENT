@@ -5,10 +5,9 @@ worker commands, migration behavior and delivery limitations.
 Staff sign-in is now required. Follow `STAFF_ACCESS.md` to provision the first
 administrator on the trusted host; there are no default accounts or passwords.
 
-This is a runnable next-version application, not a replacement deployment.
+The preview selects this application with `MEDAGENT_APP_VERSION=v2`.
 Run `python -m streamlit run app_v2.py` from the repository directory.
-The original `app.py`, its database, and the current Render preview keep their
-existing behavior. The new app uses `MEDAGENT_V2_DB_PATH` (default `medagent_v2.db`).
+The original production branch and database remain separate. V2 uses `MEDAGENT_V2_DB_PATH` (default `medagent_v2.db`).
 Do not point it at the original database. Use synthetic data while developing.
 
 ## Try the complete journey
@@ -31,7 +30,8 @@ not a prediction of the number of consultations that will actually finish.
 Completed routine visits continue to consume their original booking allocation.
 Emergency session capacity instead represents concurrent places across dates;
 admission, completion or transfer-required routing releases an emergency place.
-Live routine clinician occupancy, leave, breaks and reassignment are future work.
+Consultation start/finish timing, dated leave and breaks are now available.
+See `OPERATIONS.md`. Reassignment of started visits remains future work.
 
 ## Data and agent boundaries
 

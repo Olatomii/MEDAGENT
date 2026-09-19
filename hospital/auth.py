@@ -29,6 +29,19 @@ def initialize_auth(path):
         conn.execute('''CREATE TABLE IF NOT EXISTS staff_audit (
             audit_id INTEGER PRIMARY KEY,user_id INTEGER,action TEXT NOT NULL,
             outcome TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
+        columns={r['name'] for r in conn.execute('PRAGMA table_info(staff_users)')}
+        for name,definition in [('patient_id','TEXT REFERENCES patients(patient_id)'),('must_change','INTEGER NOT NULL DEFAULT 0')]:
+            if name not in columns:
+                conn.execute(f'ALTER TABLE staff_users ADD COLUMN {name} {definition}')
+        conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS patient_account ON staff_users(patient_id) WHERE patient_id IS NOT NULL')
+        conn.execute('''CREATE TABLE IF NOT EXISTS patient_invites (
+            token_hash TEXT PRIMARY KEY,patient_id TEXT NOT NULL REFERENCES patients,expires_at REAL NOT NULL,
+            consumed INTEGER NOT NULL DEFAULT 0)''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS email_verifications (
+            user_id INTEGER PRIMARY KEY REFERENCES staff_users,email TEXT NOT NULL,code_hash TEXT NOT NULL,
+            expires_at REAL NOT NULL,requested_at REAL NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)''')
+        if 'verified_email' not in {r['name'] for r in conn.execute('PRAGMA table_info(patients)')}:
+            conn.execute("ALTER TABLE patients ADD COLUMN verified_email TEXT NOT NULL DEFAULT ''")
 
 
 def password_digest(password,salt):
@@ -103,12 +116,29 @@ def login(path,username,password,now=None):
 def authenticate(path,token,now=None):
     now=time.time() if now is None else now
     with connection(path) as conn:
-        user=conn.execute('''SELECT u.user_id,u.username,u.role FROM staff_sessions s JOIN staff_users u USING(user_id)
+        user=conn.execute('''SELECT u.user_id,u.username,u.role,u.patient_id,u.must_change FROM staff_sessions s JOIN staff_users u USING(user_id)
             WHERE s.token_hash=? AND s.expires_at>? AND u.enabled=1''',
             (hashlib.sha256((token or '').encode()).hexdigest(),now)).fetchone()
     if user is None:
         raise AccessDenied('Your session has ended. Sign in again.')
     return dict(user)
+
+
+def change_own_password(path,token,current,password):
+    user=authenticate(path,token)
+    if current==password:
+        raise ValueError('Choose a new password different from the current password.')
+    if not 12<=len(password)<=256:
+        raise ValueError('Password must contain 12–256 characters.')
+    with connection(path,write=True) as conn:
+        row=conn.execute('SELECT * FROM staff_users WHERE user_id=?',(user['user_id'],)).fetchone()
+        if not hmac.compare_digest(password_digest(current,row['salt']),row['password_hash']):
+            raise AccessDenied('Current password is incorrect.')
+        salt=secrets.token_hex(16)
+        conn.execute('UPDATE staff_users SET salt=?,password_hash=?,must_change=0 WHERE user_id=?',
+                     (salt,password_digest(password,salt),user['user_id']))
+        conn.execute('DELETE FROM staff_sessions WHERE user_id=?',(user['user_id'],))
+        conn.execute("INSERT INTO staff_audit(user_id,action,outcome) VALUES (?,'CHANGE_OWN_PASSWORD','SUCCESS')",(user['user_id'],))
 
 
 def logout(path,token):

@@ -72,6 +72,8 @@ class ClinicalCare:
             occupied=conn.execute("SELECT COUNT(*) FROM visits WHERE state='ADMITTED' AND ward_id=?",(ward_id,)).fetchone()[0]
             if occupied>=ward['capacity']:
                 raise Conflict('No configured bed is available in this ward. Patient remains in consultation.')
+            from .scheduling import finish_consultation
+            finish_consultation(conn,visit_id)
             conn.execute("UPDATE visits SET state='ADMITTED',ward_id=?,version=version+1,notes=notes||? WHERE visit_id=?",
                          (ward_id,'\n[WARD] '+ward['name']+' '+notes.strip(),visit_id))
             emit(conn,'WARD_ADMITTED',visit_id,reason='Staff ordered admission; reserved a place in '+ward['name']+'.')

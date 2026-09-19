@@ -50,9 +50,9 @@ def message(date, specialty):
             'and urgency; no fixed consultation time is assigned.\n\nMedAgent Sync')
 
 
-def send_email(recipient, body, key):
+def send_email(recipient, body, key, subject='Appointment reminder'):
     payload = json.dumps({'from': os.environ['REMINDER_FROM_EMAIL'],
-                          'to': [recipient], 'subject': 'Appointment reminder',
+                          'to': [recipient], 'subject': subject,
                           'text': body}).encode()
     request = urllib.request.Request('https://api.resend.com/emails', data=payload,
         headers={'Authorization': 'Bearer ' + os.environ['RESEND_API_KEY'],

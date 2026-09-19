@@ -1,7 +1,8 @@
 # Staff access in the development application
 
 `app_v2.py` now requires staff sign-in before displaying patients or executing
-application commands. The original `app.py` and current preview are unchanged.
+application commands. The preview selects v2 through `MEDAGENT_APP_VERSION=v2`;
+the original production branch remains separate.
 No staff accounts or default credentials are committed or created automatically.
 A persistent database is required to retain accounts.
 
@@ -42,7 +43,8 @@ and database; they intentionally do not accept web sessions.
 | ward | Ward workspace, discharge/transfer, reconciliation of already-admitted unassigned patients |
 
 Clinical staff currently share clinical chart read access; this is role-based
-access, not assignment-based patient isolation. There is no patient portal yet.
+access, not assignment-based patient isolation. Patient portal accounts are
+individually linked and restricted to their own appointments.
 Capacity changes and event processing controls are administrator-only in the UI.
 
 ## Session and password behavior
@@ -67,7 +69,11 @@ python -m hospital.manage --database medagent_v2.db reset-password username
 
 Disabling an account or resetting its password revokes all its sessions. A reset
 does not re-enable a disabled account. The last enabled administrator cannot be
-disabled. Username/role changes and user self-service are not yet implemented.
+disabled. Administrators can create accounts, change roles, disable access and
+reset passwords in Staff management. Web-created/reset passwords are temporary:
+users must choose a different password before opening a workspace. Everyone can
+change their own password in the sidebar, which signs out all their sessions.
+Usernames are immutable. See `OPERATIONS.md` for patient invitations.
 
 ## Enforcement and attribution
 
@@ -88,6 +94,6 @@ Older and unattended events can have no staff actor. Agent decisions link to the
 triggering event; automatic decisions during synchronous processing may retain the
 initiating staff actor. Audit data is not an immutable, tamper-proof external log.
 
-Use HTTPS and persistent storage before exposing sign-in remotely. This milestone
-has not changed hosting, activated real emails, created remote staff accounts or
-established production security/compliance readiness.
+The preview uses HTTPS but temporary storage; use synthetic records only.
+Persistent storage, verified email delivery, MFA/SSO, external audit retention
+and production security/compliance readiness remain deployment work.

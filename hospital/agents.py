@@ -23,7 +23,7 @@ def available_doctor(conn, specialty, date):
         FROM sessions s JOIN doctors d ON d.doctor_id=s.doctor_id
         LEFT JOIN appointments a ON a.doctor_id=s.doctor_id AND a.service_date=s.service_date
           AND a.status IN ('CONFIRMED','CHECKED_IN','FULFILLED')
-        WHERE d.specialty=? AND s.service_date=?
+        WHERE d.specialty=? AND s.service_date=? AND s.enabled=1
         GROUP BY s.doctor_id HAVING booked<s.capacity ORDER BY booked,s.doctor_id LIMIT 1''',
         (specialty,date)).fetchone()
 
@@ -38,7 +38,7 @@ def emergency_doctor(conn,date):
             AND v.state NOT IN ('ADMITTED','COMPLETED','TRANSFER_REQUIRED'))) AS booked
         FROM sessions s JOIN doctors d USING(doctor_id)
         WHERE d.specialty='Emergency / Trauma' AND s.service_date=?
-        AND s.capacity>0 AND booked<s.capacity ORDER BY booked,s.doctor_id LIMIT 1''',(date,)).fetchone()
+        AND s.enabled=1 AND s.capacity>0 AND booked<s.capacity ORDER BY booked,s.doctor_id LIMIT 1''',(date,)).fetchone()
 
 
 class WaitlistAgent:
@@ -90,6 +90,8 @@ class AppointmentAgent:
 class ClinicalSupportAgent:
     def handle(self,conn,event,data):
         agents={'VITALS_RECORDED':'Clinical prep agent','WARD_ADMITTED':'Ward agent',
+                'AVAILABILITY_CHANGED':'Availability agent','CONSULTATION_STARTED':'Queue agent',
+                'ATTENDANCE_CONFIRMED':'Appointment agent',
                 'WARD_DISCHARGED':'Ward agent','WARD_CAPACITY_CHANGED':'Ward agent',
                 'BILLING_CLEARED':'Billing agent','REMINDER_ACCEPTED':'Reminder agent',
                 'REMINDER_REVIEW_REQUIRED':'Reminder agent','REMINDER_PREFERENCE_CHANGED':'Reminder agent'}

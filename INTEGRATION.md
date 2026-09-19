@@ -1,7 +1,8 @@
 # Integrated care and reminders in v2
 
 Start `python -m streamlit run app_v2.py` with a separate `MEDAGENT_V2_DB_PATH`.
-No current Render deployment, live database or email settings have been changed.
+The preview selects this entry point through `MEDAGENT_APP_VERSION=v2`.
+The original production site is separate. Live v2 email delivery remains disabled.
 Use synthetic patients. Staff sign-in and enforced roles are documented in
 `STAFF_ACCESS.md`; production deployment and security review remain pending.
 

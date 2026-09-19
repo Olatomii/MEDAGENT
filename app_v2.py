@@ -7,8 +7,10 @@ from hospital.service import Hospital, TRANSITIONS
 from hospital.agents import process_events
 from hospital import notifications
 from reminders import valid_email
-from hospital.auth import initialize_auth,login,logout,AccessDenied,bootstrap_admin
+from hospital.auth import initialize_auth,login,logout,AccessDenied,bootstrap_admin,authenticate
 from hospital.access import StaffHospital,PAGES
+from hospital.accounts import accept_invitation
+from hospital.ui_accounts import password_form,staff_management,invite_panel,patient_portal,evaluation_backup
 
 st.set_page_config(page_title='MedAgent | Patient workspace',page_icon='✚',layout='wide')
 st.markdown('<style>'+Path(__file__).with_name('style.css').read_text()+'</style>',unsafe_allow_html=True)
@@ -35,7 +37,7 @@ if not st.session_state.get('staff_token'):
                     st.rerun()
         st.caption('Setup is locked after the first account is created. There are no default credentials.')
         st.stop()
-    st.title('MedAgent staff sign-in')
+    st.title('MedAgent sign-in')
     with st.form('signin',clear_on_submit=True):
         username=st.text_input('Username')
         password=st.text_input('Password',type='password')
@@ -48,14 +50,35 @@ if not st.session_state.get('staff_token'):
                 st.session_state.clear()
                 st.session_state.staff_token=token
                 st.rerun()
-    st.caption('Ask your administrator for an account. Initial accounts are created on the host with the create-staff command; there is no default password.')
+    with st.expander('Activate patient invitation'):
+        with st.form('activate-patient',clear_on_submit=True):
+            invitation=st.text_input('Private invitation code',type='password')
+            new_username=st.text_input('Choose patient username')
+            new_password=st.text_input('Choose patient password (12–256 characters)',type='password')
+            if st.form_submit_button('Activate patient account'):
+                try:
+                    accept_invitation(core.path,invitation,new_username,new_password)
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.success('Patient account created. Sign in above.')
+    st.caption('Staff accounts are created by administrators. Patient accounts require a private invitation from the hospital.')
     st.stop()
 hospital=StaffHospital(core,st.session_state.staff_token)
 try:
-    staff=hospital.user
+    staff=authenticate(core.path,st.session_state.staff_token)
 except AccessDenied:
     st.session_state.clear()
     st.rerun()
+if staff['must_change']:
+    st.title('Choose your own password')
+    st.info('Change your temporary password before accessing any patient or staff workspace.')
+    password_form(core.path,st.session_state.staff_token)
+    if st.button('Sign out instead'):
+        logout(core.path,st.session_state.staff_token)
+        st.session_state.clear()
+        st.rerun()
+    st.stop()
 process_events(hospital.path)
 st.sidebar.title('MedAgent Sync')
 st.sidebar.caption('Patient & agent workspace')
@@ -64,6 +87,11 @@ if st.sidebar.button('Sign out'):
     logout(hospital.path,st.session_state.staff_token)
     st.session_state.clear()
     st.rerun()
+with st.sidebar.expander('Change my password'):
+    password_form(core.path,st.session_state.staff_token)
+if staff['role']=='patient':
+    patient_portal(core.path,st.session_state.staff_token,core.today())
+    st.stop()
 page=st.sidebar.radio('Workspace',PAGES[staff['role']])
 hospital.authorize_page(page)
 st.sidebar.info('Development version · separate patient database')
@@ -103,6 +131,8 @@ if page=='Patients':
     if filtered:
         st.dataframe(filtered,hide_index=True,use_container_width=True)
         selected=st.selectbox('Patient history',[p['patient_id'] for p in filtered],format_func=patient_names.get)
+        with st.expander('Patient portal access'):
+            invite_panel(core.path,st.session_state.staff_token,selected)
         contact=next(p for p in filtered if p['patient_id']==selected)
         edited_email=st.text_input('Update patient email',value=contact['email'],key='email'+selected+contact['email'])
         suggestion=notifications.suggested_email(edited_email)
@@ -135,6 +165,32 @@ elif page=='Doctor sessions':
         if st.form_submit_button('Save session',type='primary'):
             act(lambda:hospital.set_session(doctor,date.isoformat(),capacity),'Session saved; eligible waitlist entries checked.')
     st.dataframe(hospital.records('''SELECT s.service_date,d.name,d.specialty,s.capacity FROM sessions s JOIN doctors d USING(doctor_id) ORDER BY s.service_date,d.name'''),hide_index=True,use_container_width=True)
+    st.subheader('Working hours, leave and breaks')
+    sessions=hospital.records('SELECT * FROM sessions ORDER BY service_date DESC,doctor_id')
+    if sessions:
+        index=st.selectbox('Session to manage',range(len(sessions)),format_func=lambda i:sessions[i]['service_date']+' · '+names[sessions[i]['doctor_id']])
+        session=sessions[index]
+        key=str(session['doctor_id'])+session['service_date']
+        start=st.time_input('Session begins',dt.time.fromisoformat(session['start_time']),key='start'+key)
+        end=st.time_input('Session ends',dt.time.fromisoformat(session['end_time']),key='end'+key)
+        enabled=st.checkbox('Doctor available (untick for leave)',value=bool(session['enabled']),key='available'+key)
+        st.caption('Leave stops new bookings and consultation starts. Existing bookings remain listed for staff to contact and reschedule.')
+        if st.button('Save availability'):
+            act(lambda:hospital.set_availability(session['doctor_id'],session['service_date'],start.strftime('%H:%M'),end.strftime('%H:%M'),enabled),'Availability saved.')
+        affected=hospital.records("SELECT appointment_id,patient_id,status FROM appointments WHERE doctor_id=? AND service_date=? AND status IN ('CONFIRMED','CHECKED_IN')",(session['doctor_id'],session['service_date']))
+        if not session['enabled'] and affected:
+            st.warning('Review these bookings because the doctor is unavailable.')
+            st.dataframe(affected,hide_index=True)
+        with st.form('break'+key):
+            bstart=st.time_input('Break begins',dt.time(12))
+            bend=st.time_input('Break ends',dt.time(13))
+            reason=st.text_input('Reason')
+            if st.form_submit_button('Add break'):
+                act(lambda:hospital.add_break(session['doctor_id'],session['service_date'],bstart.strftime('%H:%M'),bend.strftime('%H:%M'),reason),'Break recorded.')
+        for interval in hospital.records('SELECT * FROM doctor_breaks WHERE doctor_id=? AND service_date=?',(session['doctor_id'],session['service_date'])):
+            st.caption(interval['start_time']+'–'+interval['end_time']+' · '+interval['reason'])
+            if st.button('Remove break',key='removebreak'+str(interval['break_id'])):
+                act(lambda:hospital.remove_break(interval['break_id']),'Break removed.')
 
 elif page=='Appointments':
     st.caption('Reserve an appointment first. Check-in on the appointment date starts a separate visit.')
@@ -170,6 +226,7 @@ elif page=='Appointments':
         with st.expander(f"{a['name']} · {a['service_date']} · {a['status']}"):
             st.caption(f"{a['appointment_id']} · {a['specialty']} · {a['doctor'] or 'Awaiting allocation'}")
             st.caption('Billing: '+a['billing_status']+' · Email reminder: '+('opted in' if a['reminder_opt_in'] else 'off'))
+            st.caption('Planned attendance: '+('patient confirmed' if a['attendance_confirmed'] else 'not confirmed'))
             if a['status'] in ('CONFIRMED','WAITLISTED'):
                 if a['billing_status']=='PENDING':
                     reference=st.text_input('Billing reference / staff record',key='billing'+a['appointment_id'])
@@ -219,6 +276,21 @@ elif page=='Care workspace':
             if readings:
                 st.dataframe(readings,hide_index=True)
             widget_id=v['visit_id']+str(v['version'])
+            if v['state']=='CONSULTATION':
+                active=hospital.records('SELECT started_at FROM consultations WHERE visit_id=? AND finished_at IS NULL',(v['visit_id'],))
+                if active:
+                    st.info('Consultation in progress. Selecting the next care step ends this consultation segment.')
+                elif hospital.can('start_consultation'):
+                    if st.button('Start consultation',key='startconsult'+widget_id):
+                        act(lambda:hospital.start_consultation(v['visit_id'],v['version']),'Consultation started.')
+                samples=hospital.records('SELECT (finished_at-started_at)/60 AS minutes FROM consultations WHERE doctor_id=? AND finished_at IS NOT NULL ORDER BY consultation_id DESC LIMIT 30',(v['assigned_doctor_id'],))
+                if len(samples)>=3:
+                    import statistics
+                    typical=statistics.median(r['minutes'] for r in samples)
+                    ahead=hospital.records("SELECT COUNT(*) AS n FROM visits WHERE assigned_doctor_id=? AND state='CONSULTATION' AND visit_id!=? AND (urgency<? OR (urgency=? AND checked_in_at<=?))",(v['assigned_doctor_id'],v['visit_id'],v['urgency'],v['urgency'],v['checked_in_at']))[0]['n']
+                    st.caption(f'Observed median consultation: {typical:.0f} min; approximate queue wait: {ahead*typical:.0f} min. Estimate changes with urgency and actual consultation lengths.')
+                else:
+                    st.caption('Not enough completed consultation timings for a waiting-time estimate.')
             if v['state']=='ASSESSMENT':
                 st.caption('Prototype vital-sign routing rules are for simulation; staff must assess clinical urgency.')
                 with st.form('vitals'+widget_id):
@@ -278,7 +350,7 @@ elif page=='Wards':
             if st.button('Assign existing admission',key='assign'+v['visit_id']+str(v['version'])):
                 act(lambda:hospital.admit(v['visit_id'],v['version'],ward),'Existing admission assigned to ward.')
 
-else:
+elif page=='Agent decisions':
     st.caption('Events and decisions are persisted. Pending events resume on the next page interaction or when the dispatcher is run. No autonomous background worker is claimed in this version.')
     pending=hospital.records('SELECT event_id,kind,entity_id,attempts,error FROM events WHERE processed_at IS NULL')
     if pending:
@@ -297,3 +369,9 @@ else:
     st.dataframe(hospital.records('SELECT user_id,action,outcome,created_at FROM staff_audit ORDER BY audit_id DESC LIMIT 100'),hide_index=True)
     st.caption('Event actor IDs identify the initiating staff account; null identifies older events or trusted maintenance. Background decisions retain their triggering event link.')
     st.dataframe(hospital.records('SELECT event_id,kind,entity_id,actor_id,created_at FROM events ORDER BY event_id DESC LIMIT 100'),hide_index=True)
+
+elif page=='Staff management':
+    staff_management(core.path,st.session_state.staff_token)
+
+elif page=='Evaluation & backup':
+    evaluation_backup(core.path,st.session_state.staff_token)

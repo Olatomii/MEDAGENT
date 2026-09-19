@@ -5,6 +5,7 @@ from .agents import emit, available_doctor, process_events
 from reminders import valid_email
 from .clinical import ClinicalCare
 from .errors import Conflict
+from .scheduling import Scheduling
 
 
 TRANSITIONS = {
@@ -17,7 +18,7 @@ TRANSITIONS = {
 }
 
 
-class Hospital(ClinicalCare):
+class Hospital(ClinicalCare,Scheduling):
     def __init__(self,path,today=None):
         self.path=path
         self.today=today or (lambda:dt.datetime.now(ZoneInfo('Africa/Lagos')).date().isoformat())
@@ -54,7 +55,7 @@ class Hospital(ClinicalCare):
                     (doctor_id,doctor_id)).fetchone()[0]
             if capacity<booked:
                 raise Conflict('Capacity cannot be below existing allocations. Resolve affected bookings first.')
-            conn.execute('INSERT INTO sessions VALUES (?,?,?) ON CONFLICT(doctor_id,service_date) DO UPDATE SET capacity=excluded.capacity',
+            conn.execute('INSERT INTO sessions(doctor_id,service_date,capacity) VALUES (?,?,?) ON CONFLICT(doctor_id,service_date) DO UPDATE SET capacity=excluded.capacity',
                          (doctor_id,date,capacity))
             emit(conn,'CAPACITY_CHANGED',str(doctor_id),date=date,specialty=doctor['specialty'])
         process_events(self.path)
@@ -127,7 +128,7 @@ class Hospital(ClinicalCare):
                 raise Conflict('No place is available on the new date. Your original booking is unchanged. Choose another date or explicitly accept the waitlist.')
             status='CONFIRMED' if doctor else 'WAITLISTED'
             conn.execute('''UPDATE appointments SET service_date=?,doctor_id=?,status=?,revision=revision+1,
-                reminder_opt_in=?,queue_entered_at=CURRENT_TIMESTAMP WHERE appointment_id=?''',
+                reminder_opt_in=?,attendance_confirmed=0,queue_entered_at=CURRENT_TIMESTAMP WHERE appointment_id=?''',
                 (new_date,doctor['doctor_id'] if doctor else None,status,
                  a['reminder_opt_in'] if new_date>self.today() else 0,appointment_id))
             emit(conn,'APPOINTMENT_RESCHEDULED',appointment_id,
@@ -166,6 +167,8 @@ class Hospital(ClinicalCare):
                 raise Conflict('Record vital signs to complete the assessment.')
             if target=='ADMITTED':
                 raise Conflict('Use ward admission to reserve an available bed.')
+            from .scheduling import finish_consultation
+            finish_consultation(conn,visit_id)
             if visit['state']=='DIAGNOSTICS' and not notes.strip():
                 raise ValueError('Record the diagnostic results before returning to consultation.')
             terminal=target in ('COMPLETED','TRANSFER_REQUIRED')
@@ -202,6 +205,8 @@ class Hospital(ClinicalCare):
             if email==expected_email:
                 return
             conn.execute('UPDATE patients SET email=? WHERE patient_id=?',(email,patient_id))
+            if 'verified_email' in {r['name'] for r in conn.execute('PRAGMA table_info(patients)')}:
+                conn.execute("UPDATE patients SET verified_email='' WHERE patient_id=?",(patient_id,))
             conn.execute("UPDATE appointments SET reminder_opt_in=0 WHERE patient_id=? AND status IN ('CONFIRMED','WAITLISTED')",(patient_id,))
             emit(conn,'REMINDER_PREFERENCE_CHANGED',patient_id,reason='Email updated by staff; existing unstarted reminder consents cleared. Confirm consent for the new address.')
         process_events(self.path)
