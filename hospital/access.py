@@ -7,7 +7,7 @@ from .database import connection
 
 actor=ContextVar('staff_actor',default=None)
 PAGES={
-    'admin':['Patients','Appointments','Care workspace','Wards','Doctor sessions','Agent decisions'],
+    'admin':['Patients','Appointments','Care workspace','Wards','Doctor sessions','Agent decisions','Staff management','Evaluation & backup'],
     'front_desk':['Patients','Appointments'],
     'nurse':['Care workspace'],
     'physician':['Care workspace','Wards'],
@@ -16,12 +16,12 @@ PAGES={
 }
 METHODS={
     'front_desk':{'create_patient','update_email','book','reschedule','close_booking','check_in','clear_billing','reminder_preference'},
-    'nurse':{'record_vitals'},'physician':{'transition','admit'},
+    'nurse':{'record_vitals'},'physician':{'transition','admit','start_consultation'},
     'pharmacy':{'transition'},'ward':{'transition','admit'},
 }
-ALL_METHODS=set().union(*METHODS.values())|{'set_session','set_ward_capacity'}
-COMMON={'patients','appointments','doctors','sessions'}
-CLINICAL=COMMON|{'visits','vitals','wards'}
+ALL_METHODS=set().union(*METHODS.values())|{'set_session','set_ward_capacity','set_availability','add_break','remove_break'}
+COMMON={'patients','appointments','doctors','sessions','doctor_breaks'}
+CLINICAL=COMMON|{'visits','vitals','wards','consultations'}
 TABLES={'front_desk':COMMON,'nurse':CLINICAL,'physician':CLINICAL,'pharmacy':CLINICAL,'ward':CLINICAL,
         'admin':CLINICAL|{'events','decisions','notifications','legacy_imports','legacy_records','staff_audit'}}
 
@@ -38,7 +38,11 @@ class StaffHospital:
     def today(self): return self._core.today
 
     @property
-    def user(self): return authenticate(self.path,self._token)
+    def user(self):
+        user=authenticate(self.path,self._token)
+        if user['must_change'] or user['role'] not in PAGES:
+            raise AccessDenied('Change your temporary password first, or use the patient portal.')
+        return user
 
     def can(self,method):
         role=self.user['role']

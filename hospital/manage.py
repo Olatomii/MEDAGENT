@@ -2,6 +2,7 @@
 import argparse
 import time
 import getpass
+import json
 from .service import Hospital
 from .agents import process_events
 from .import_legacy import import_snapshot
@@ -26,7 +27,27 @@ def main():
     worker.add_argument('--interval',type=int,default=60)
     importer=sub.add_parser('import-legacy',help='Import a separate, immutable legacy snapshot read-only')
     importer.add_argument('source')
+    backup=sub.add_parser('backup',help='Write a private, consistent backup to a new file')
+    backup.add_argument('destination')
+    restore=sub.add_parser('restore',help='Restore a backup into a new database; never overwrite')
+    restore.add_argument('source')
+    evaluation=sub.add_parser('evaluate',help='Compare synthetic queue policies; no live records')
+    evaluation.add_argument('--seed',type=int,default=42)
+    evaluation.add_argument('--count',type=int,default=120)
+    evaluation.add_argument('--doctors',type=int,default=2)
     args=parser.parse_args()
+    if args.command in ('backup','restore'):
+        from .backup import snapshot,restore
+        result=(snapshot(args.database,args.destination) if args.command=='backup'
+                else restore(args.source,args.database))
+        print(f'Wrote {result}. Keep this file private; it contains patient records and password hashes.')
+        return
+    if args.command=='evaluate':
+        from .evaluation import compare
+        if args.count<1 or args.doctors<1:
+            parser.error('Count and doctors must be positive.')
+        print(json.dumps(compare(args.seed,args.count,args.doctors),indent=2))
+        return
     hospital=Hospital(args.database)
     initialize_auth(hospital.path)
     if args.command in ('create-staff','reset-password'):

@@ -76,7 +76,10 @@ def initialize(path):
             'appointments': [('billing_status', "TEXT NOT NULL DEFAULT 'PENDING'"),
                              ('billing_reference', "TEXT NOT NULL DEFAULT ''"),
                              ('revision', 'INTEGER NOT NULL DEFAULT 0'),
-                             ('queue_entered_at', 'TEXT')],
+                             ('queue_entered_at', 'TEXT'),
+                             ('attendance_confirmed', 'INTEGER NOT NULL DEFAULT 0')],
+            'sessions': [('enabled','INTEGER NOT NULL DEFAULT 1'),('start_time',"TEXT NOT NULL DEFAULT '00:00'"),
+                         ('end_time',"TEXT NOT NULL DEFAULT '23:59'")],
             'visits': [('assigned_doctor_id', 'INTEGER REFERENCES doctors(doctor_id)'),
                        ('urgency', 'INTEGER'), ('ward_id', 'INTEGER REFERENCES wards(ward_id)')],
         }
@@ -89,6 +92,14 @@ def initialize(path):
                 if name not in existing:
                     conn.execute(f'ALTER TABLE {table} ADD COLUMN {name} {definition}')
         conn.execute("UPDATE appointments SET billing_status='EXEMPT' WHERE urgency IN (1,2)")
+        conn.execute('''CREATE TABLE IF NOT EXISTS doctor_breaks (
+            break_id INTEGER PRIMARY KEY,doctor_id INTEGER NOT NULL REFERENCES doctors,
+            service_date TEXT NOT NULL,start_time TEXT NOT NULL,end_time TEXT NOT NULL,reason TEXT NOT NULL)''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS consultations (
+            consultation_id INTEGER PRIMARY KEY,visit_id TEXT NOT NULL REFERENCES visits,
+            doctor_id INTEGER NOT NULL REFERENCES doctors,started_at REAL NOT NULL,finished_at REAL)''')
+        conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS busy_doctor ON consultations(doctor_id) WHERE finished_at IS NULL')
+        conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS busy_visit ON consultations(visit_id) WHERE finished_at IS NULL')
         conn.execute('''UPDATE visits SET assigned_doctor_id=(SELECT doctor_id FROM appointments a WHERE a.appointment_id=visits.appointment_id)
             WHERE assigned_doctor_id IS NULL''')
         conn.execute('''UPDATE visits SET urgency=(SELECT urgency FROM appointments a WHERE a.appointment_id=visits.appointment_id)
