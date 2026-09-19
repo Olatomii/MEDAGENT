@@ -14,7 +14,7 @@ def h(tmp_path):
 
 
 def patient(h,name='Test Patient'):
-    return h.create_patient(name,30,'Female','test@example.com')
+    return h.create_patient(name,30,'Female','test@example.com',confirm_distinct=True)
 
 
 def booked(h):

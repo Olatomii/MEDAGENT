@@ -28,15 +28,18 @@ class Hospital(ClinicalCare,Scheduling):
         with connection(self.path) as conn:
             return [dict(r) for r in conn.execute(query,params)]
 
-    def create_patient(self,name,age,gender,email=''):
+    def create_patient(self,name,age,gender,email='',confirm_distinct=False):
         name,email=name.strip(),email.strip()
         if not name or not 0<=age<=120 or (email and not valid_email(email)):
             raise ValueError('Provide a name, age from 0 to 120, and a valid email if supplied.')
         patient_id=identifier('P')
         with connection(self.path,write=True) as conn:
+            from .experience import matches
+            if matches(conn,name,age,email) and not confirm_distinct:
+                raise Conflict('Possible existing patient: search by name/email before proceeding. Confirm these are different people to create another record.')
             conn.execute('INSERT INTO patients(patient_id,name,age,gender,email) VALUES (?,?,?,?,?)',
                          (patient_id,name,age,gender,email))
-            emit(conn,'PATIENT_CREATED',patient_id)
+            emit(conn,'PATIENT_CREATED',patient_id,confirmed_distinct=bool(confirm_distinct))
         return patient_id
 
     def set_session(self,doctor_id,date,capacity):
