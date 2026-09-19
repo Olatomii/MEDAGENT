@@ -122,6 +122,21 @@ def patient_portal(path,token,today):
 
 def evaluation_backup(path,token):
     accounts.require_user(path,token,{'admin'})
+    st.subheader('Background services')
+    from .database import connection
+    with connection(path) as conn:
+        exists=conn.execute("SELECT 1 FROM sqlite_master WHERE name='maintenance_status'").fetchone()
+        statuses=[dict(r) for r in conn.execute('SELECT * FROM maintenance_status ORDER BY job')] if exists else []
+    if statuses:
+        st.dataframe(statuses,hide_index=True)
+        heartbeat=next((r for r in statuses if r['job']=='worker'),None)
+        if not heartbeat or (dt.datetime.now(dt.timezone.utc)-dt.datetime.fromisoformat(heartbeat['attempted_at'])).total_seconds()>180:
+            st.warning('Worker heartbeat is overdue. Check the host before relying on scheduled reminders or backups.')
+        if any(r['state'] in ('ERROR','REVIEW_REQUIRED') for r in statuses):
+            st.warning('A background job needs attention. Review the status above.')
+    else:
+        st.info('The background worker has not reported a maintenance cycle yet.')
+    st.caption('Automatic snapshots on the same disk help recover earlier records but do not protect against loss of that disk. Keep a private off-site copy as well.')
     st.subheader('Synthetic queue evaluation')
     st.caption('Same synthetic arrivals and variable durations for both policies. This separate experiment is not a clinical validation or a claim about real hospital performance. Routine aging is experimental and not used by the live queue.')
     seed=st.number_input('Random seed',min_value=0,max_value=100000,value=42)
