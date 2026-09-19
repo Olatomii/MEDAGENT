@@ -13,7 +13,7 @@ def h(tmp_path):
 
 def booking(h,date='2026-10-01',clear=True,consent=False):
     h.set_session(1,date,20)
-    p=h.create_patient('Synthetic patient',30,'Female','patient@example.com')
+    p=h.create_patient('Synthetic patient',30,'Female','patient@example.com',confirm_distinct=True)
     a=h.book(p,date,'General Practice',5,consent)
     if clear:
         h.clear_billing(a,'Synthetic clearance')

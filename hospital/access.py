@@ -7,10 +7,10 @@ from .database import connection
 
 actor=ContextVar('staff_actor',default=None)
 PAGES={
-    'admin':['Patients','Appointments','Care workspace','Wards','Doctor sessions','Agent decisions','Staff management','Evaluation & backup'],
-    'front_desk':['Patients','Appointments'],
-    'nurse':['Care workspace'],
-    'physician':['Care workspace','Wards'],
+    'admin':['Overview','Patients','Appointments','Care workspace','Wards','Doctor sessions','Agent decisions','Staff management','Evaluation & backup'],
+    'front_desk':['Overview','Patients','Appointments'],
+    'nurse':['Overview','Care workspace'],
+    'physician':['Overview','Care workspace','Wards'],
     'pharmacy':['Care workspace'],
     'ward':['Wards'],
 }

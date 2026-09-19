@@ -37,6 +37,19 @@ class PatientPortal:
                 FROM appointments a LEFT JOIN doctors d ON d.doctor_id=a.doctor_id
                 WHERE a.patient_id=? ORDER BY a.service_date DESC''',(user['patient_id'],))]
 
+    def updates(self):
+        user=self.user
+        labels={'APPOINTMENT_CONFIRMED':'Appointment confirmed. Review your current doctor and date.',
+                'APPOINTMENT_WAITLISTED':'Added to the waitlist. A place is not yet confirmed.',
+                'APPOINTMENT_RESCHEDULED':'Appointment date changed. Review your current booking.',
+                'APPOINTMENT_REASSIGNED':'Your assigned doctor changed. Review and reconfirm your attendance.',
+                'APPOINTMENT_CANCELLED':'Appointment cancelled.',
+                'APPOINTMENT_MISSED':'Appointment recorded as missed.',
+                'ATTENDANCE_CONFIRMED':'You confirmed plans to attend. Check in with staff on arrival.'}
+        with connection(self.path) as conn:
+            rows=conn.execute("SELECT e.event_id,e.kind,e.created_at,e.entity_id FROM events e JOIN appointments a ON a.appointment_id=e.entity_id WHERE a.patient_id=? ORDER BY e.event_id DESC",(user['patient_id'],)).fetchall()
+        return [{'Time (UTC)':r['created_at'],'Update':labels[r['kind']],'Appointment':r['entity_id']} for r in rows if r['kind'] in labels][:50]
+
     def _owned(self,appointment_id):
         user=self.user
         with connection(self.path) as conn:
@@ -55,6 +68,11 @@ class PatientPortal:
         user=self.user
         if specialty not in ('General Practice','Cardiology','Orthopedics'):
             raise ValueError('Only routine appointments can be requested in the portal.')
+        from .experience import initialize
+        initialize(self.path)
+        with connection(self.path) as conn:
+            if conn.execute('SELECT 1 FROM duplicate_reviews WHERE patient_id=? AND resolved=0',(user['patient_id'],)).fetchone():
+                raise ValueError('Please contact the front desk to complete your identity review before booking.')
         return self._invoke(user,'book',user['patient_id'],date,specialty,5,consent)
 
     def reschedule(self,appointment_id,revision,date,allow_waitlist=False):

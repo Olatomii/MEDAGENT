@@ -10,6 +10,7 @@ from reminders import valid_email
 from hospital.auth import initialize_auth,login,logout,AccessDenied,bootstrap_admin,authenticate
 from hospital.access import StaffHospital,PAGES
 from hospital.accounts import accept_invitation
+from hospital.ui_experience import registration,duplicate_panel,reassignment,dashboard
 from hospital.ui_accounts import password_form,staff_management,invite_panel,patient_portal,evaluation_backup
 
 st.set_page_config(page_title='MedAgent | Patient workspace',page_icon='✚',layout='wide')
@@ -50,6 +51,7 @@ if not st.session_state.get('staff_token'):
                 st.session_state.clear()
                 st.session_state.staff_token=token
                 st.rerun()
+    registration(core.path)
     with st.expander('Activate patient invitation'):
         with st.form('activate-patient',clear_on_submit=True):
             invitation=st.text_input('Private invitation code',type='password')
@@ -62,7 +64,7 @@ if not st.session_state.get('staff_token'):
                     st.error(str(exc))
                 else:
                     st.success('Patient account created. Sign in above.')
-    st.caption('Staff accounts are created by administrators. Patient accounts require a private invitation from the hospital.')
+    st.caption('Staff accounts are created by administrators. New patients can register; existing patients should request an invitation.')
     st.stop()
 hospital=StaffHospital(core,st.session_state.staff_token)
 try:
@@ -113,7 +115,9 @@ def act(callback, message):
 patients=hospital.records('SELECT * FROM patients ORDER BY name,patient_id')
 patient_names={p['patient_id']:f"{p['name']} · {p['patient_id']}" for p in patients}
 doctors=hospital.records('SELECT * FROM doctors ORDER BY specialty,doctor_id')
-if page=='Patients':
+if page=='Overview':
+    dashboard(core.path,st.session_state.staff_token)
+elif page=='Patients':
     st.caption('Create one permanent record per patient. Use their ID for each subsequent appointment.')
     with st.form('patient'):
         name=st.text_input('Full name')
@@ -124,10 +128,12 @@ if page=='Patients':
         suggestion=notifications.suggested_email(email)
         if suggestion:
             st.warning('Check the spelling: did you mean '+suggestion+'? The address is not changed automatically.')
+        distinct=st.checkbox('I checked possible matches and verified this is a different person')
         if st.form_submit_button('Create patient',type='primary'):
-            act(lambda:hospital.create_patient(name,age,gender,email),'Patient created. ID:')
-    search=st.text_input('Find a patient by name or ID')
-    filtered=[p for p in patients if search.lower() in (p['name']+' '+p['patient_id']).lower()]
+            act(lambda:hospital.create_patient(name,age,gender,email,distinct),'Patient created. ID:')
+    duplicate_panel(core.path,st.session_state.staff_token)
+    search=st.text_input('Find a patient by name, email or ID')
+    filtered=[p for p in patients if search.lower() in (p['name']+' '+p['email']+' '+p['patient_id']).lower()]
     if filtered:
         st.dataframe(filtered,hide_index=True,use_container_width=True)
         selected=st.selectbox('Patient history',[p['patient_id'] for p in filtered],format_func=patient_names.get)
@@ -239,6 +245,8 @@ elif page=='Appointments':
                     consent=st.checkbox('Patient agrees to reminders for this appointment',key='consent'+a['appointment_id'])
                     if st.button('Enable reminder',key='optin'+a['appointment_id'],disabled=not consent):
                         act(lambda:hospital.reminder_preference(a['appointment_id'],True),'Reminder consent recorded.')
+            if a['status']=='CONFIRMED' and a['urgency']>2 and a['service_date']>=hospital.today():
+                reassignment(core.path,st.session_state.staff_token,a)
             if a['status']=='CONFIRMED' and a['service_date']==hospital.today():
                 if st.button('Check in',key='in'+a['appointment_id']):
                     act(lambda:hospital.check_in(a['appointment_id']),'Patient checked in. Visit:')

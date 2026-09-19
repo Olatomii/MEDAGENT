@@ -83,7 +83,7 @@ class AppointmentAgent:
     name = 'Appointment agent'
 
     def handle(self, conn, event, data):
-        if event['kind'] in ('APPOINTMENT_CONFIRMED','APPOINTMENT_WAITLISTED','APPOINTMENT_CANCELLED','APPOINTMENT_MISSED','APPOINTMENT_RESCHEDULED','LEGACY_IMPORTED'):
+        if event['kind'] in ('APPOINTMENT_CONFIRMED','APPOINTMENT_WAITLISTED','APPOINTMENT_CANCELLED','APPOINTMENT_MISSED','APPOINTMENT_RESCHEDULED','APPOINTMENT_REASSIGNED','LEGACY_IMPORTED'):
             decision(conn,event['event_id'],self.name,event['entity_id'],data['reason'])
 
 
