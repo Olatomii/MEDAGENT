@@ -48,3 +48,15 @@ button:focus-visible, input:focus-visible, [role="radiogroup"] label:focus-withi
     [data-testid="stMetric"] { padding: .75rem 1rem; }
     [data-testid="stMetricValue"] { font-size: 1.5rem; }
 }
+/* Phone layouts: stack forms, preserve labels, and keep long IDs readable. */
+@media (max-width: 640px) {
+    [data-testid="stHorizontalBlock"] { flex-direction: column; gap: .75rem; }
+    [data-testid="stColumn"] { width: 100% !important; flex: 1 1 100% !important; min-width: 0 !important; }
+    [data-testid="stFormSubmitButton"] button,
+    [data-testid="stButton"] button { width: 100%; min-height: 44px; }
+    [data-testid="stMainBlockContainer"] { padding: 1.5rem .75rem 3rem; }
+    [data-testid="stExpander"] summary { padding: .75rem; }
+    [data-testid="stMarkdownContainer"] p,
+    [data-testid="stCaptionContainer"] { overflow-wrap: anywhere; }
+    input, textarea { font-size: 16px !important; }
+}

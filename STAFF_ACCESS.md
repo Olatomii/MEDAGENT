@@ -44,7 +44,8 @@ and database; they intentionally do not accept web sessions.
 
 Clinical staff currently share clinical chart read access; this is role-based
 access, not assignment-based patient isolation. Patient portal accounts are
-individually linked and restricted to their own appointments.
+individually linked and restricted to their own appointments. Self-registration
+and duplicate review are documented in PATIENT_EXPERIENCE.md.
 Capacity changes and event processing controls are administrator-only in the UI.
 
 ## Session and password behavior

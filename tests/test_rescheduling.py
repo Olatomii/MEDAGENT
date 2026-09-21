@@ -11,7 +11,7 @@ def h(tmp_path):
 
 
 def book(h,date='2026-10-02',consent=False):
-    p=h.create_patient('Schedule test',30,'Female','test@example.com')
+    p=h.create_patient('Schedule test',30,'Female','test@example.com',confirm_distinct=True)
     return h.book(p,date,'General Practice',5,consent)
 
 

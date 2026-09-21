@@ -87,11 +87,18 @@ def patient_portal(path,token,today):
         consent=st.checkbox('I agree to an email reminder',disabled=date.isoformat()<=today)
         if st.button('Request appointment'):
             action(lambda:portal.book(date.isoformat(),specialty,consent if date.isoformat()>today else False),'Request saved. Check confirmation or waitlist status below. Billing is handled by the front desk.')
+    with st.expander('Appointment updates'):
+        updates=portal.updates()
+        if updates:
+            for update in updates:
+                st.write(update['Update'])
+                st.caption(update['Time (UTC)']+' UTC · '+update['Appointment'])
+        else: st.info('No appointment updates yet.')
     appointments=portal.appointments()
     if not appointments:
         st.info('You have no appointments yet.')
     for a in appointments:
-        with st.expander(f"{a['service_date']} · {a['specialty']} · {a['status']}",expanded=True):
+        with st.expander(f"{a['service_date']} · {a['specialty']} · {a['status']}",expanded=a['status'] in ('CONFIRMED','WAITLISTED')):
             st.caption('Doctor: '+str(a['doctor'] or 'Awaiting allocation')+' · Billing: '+a['billing_status'])
             key=a['appointment_id']+str(a['revision'])
             if a['status']=='CONFIRMED' and a['service_date']>=today:

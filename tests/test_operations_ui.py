@@ -71,3 +71,21 @@ def test_temporary_password_ui_gate(ui):
     assert not app.exception
     assert app.title[0].value=='MedAgent sign-in'
     assert login(h.path,'nurse','Changed-password-42')
+
+
+def test_self_registration_signin_and_booking(ui):
+    h,_=ui
+    app=AppTest.from_file(APP,default_timeout=20).run()
+    values={'Your full name':'New portal patient','Your email address':'new@example.com','Your new username':'newportal',
+            'Your new password (12–256 characters)':PASSWORD,'Confirm your new password':PASSWORD}
+    for w in app.text_input:
+        if w.label in values:w.set_value(values[w.label])
+    next(w for w in app.checkbox if w.label.startswith('I am creating')).check()
+    next(b for b in app.button if b.label=='Create my patient account').click().run()
+    assert not app.exception and app.success
+    next(w for w in app.text_input if w.label=='Username').set_value('newportal')
+    next(w for w in app.text_input if w.label=='Password').set_value(PASSWORD)
+    next(b for b in app.button if b.label=='Sign in').click().run()
+    next(b for b in app.button if b.label=='Request appointment').click().run()
+    assert not app.exception and not app.error
+    assert any('Appointment updates'==e.label for e in app.expander)
