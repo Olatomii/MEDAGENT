@@ -10,6 +10,7 @@ from reminders import valid_email
 from hospital.auth import initialize_auth,login,logout,AccessDenied,bootstrap_admin,authenticate
 from hospital.access import StaffHospital,PAGES
 from hospital.accounts import accept_invitation
+from hospital.ui_public import introduction
 from hospital.ui_experience import registration,duplicate_panel,reassignment,dashboard
 from hospital.ui_accounts import password_form,staff_management,invite_panel,patient_portal,evaluation_backup
 
@@ -18,25 +19,27 @@ st.markdown('<style>'+Path(__file__).with_name('style.css').read_text()+'</style
 core=Hospital(os.getenv('MEDAGENT_V2_DB_PATH','medagent_v2.db'))
 initialize_auth(core.path)
 if not st.session_state.get('staff_token'):
+    introduction()
     if not core.records('SELECT user_id FROM staff_users LIMIT 1'):
-        st.title('Set up your administrator account')
-        st.info('Retrieve MEDAGENT_SETUP_TOKEN from this service’s Environment settings in Render. It is a private setup code, not your new password.')
-        with st.form('setup',clear_on_submit=True):
-            setup_token=st.text_input('Private setup code',type='password')
-            username=st.text_input('Choose administrator username')
-            password=st.text_input('Choose password (at least 12 characters)',type='password')
-            confirmation=st.text_input('Confirm password',type='password')
-            if st.form_submit_button('Create administrator',type='primary'):
-                try:
-                    if password!=confirmation:
-                        raise ValueError('Passwords do not match.')
-                    bootstrap_admin(core.path,setup_token,username,password)
-                except ValueError as exc:
-                    st.error(str(exc))
-                else:
-                    st.session_state.clear()
-                    st.rerun()
-        st.caption('Setup is locked after the first account is created. There are no default credentials.')
+        with st.expander('Administrator setup'):
+            st.title('Set up your administrator account')
+            st.info('Retrieve MEDAGENT_SETUP_TOKEN from this service’s Environment settings in Render. It is a private setup code, not your new password.')
+            with st.form('setup',clear_on_submit=True):
+                setup_token=st.text_input('Private setup code',type='password')
+                username=st.text_input('Choose administrator username')
+                password=st.text_input('Choose password (at least 12 characters)',type='password')
+                confirmation=st.text_input('Confirm password',type='password')
+                if st.form_submit_button('Create administrator',type='primary'):
+                    try:
+                        if password!=confirmation:
+                            raise ValueError('Passwords do not match.')
+                        bootstrap_admin(core.path,setup_token,username,password)
+                    except ValueError as exc:
+                        st.error(str(exc))
+                    else:
+                        st.session_state.clear()
+                        st.rerun()
+            st.caption('Setup is locked after the first account is created. There are no default credentials.')
         st.stop()
     st.title('MedAgent sign-in')
     with st.form('signin',clear_on_submit=True):
@@ -96,7 +99,7 @@ if staff['role']=='patient':
     st.stop()
 page=st.sidebar.radio('Workspace',PAGES[staff['role']])
 hospital.authorize_page(page)
-st.sidebar.info('Development version · separate patient database')
+st.sidebar.info('Hospital workflow prototype · synthetic data only')
 st.title(page)
 if st.session_state.get('feedback'):
     st.success(st.session_state.pop('feedback'))

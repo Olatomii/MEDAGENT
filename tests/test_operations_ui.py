@@ -9,6 +9,20 @@ from hospital.access import PAGES
 PASSWORD='Synthetic-test-password-42'
 APP=str(Path(__file__).resolve().parents[1]/'app_v2.py')
 
+
+def test_public_overview_on_fresh_database(tmp_path,monkeypatch):
+    path=str(tmp_path/'fresh.db')
+    monkeypatch.setenv('MEDAGENT_V2_DB_PATH',path)
+    app=AppTest.from_file(APP,default_timeout=20).run()
+    assert not app.exception
+    assert any(h.value=='MedAgent Sync' for h in app.header)
+    assert any(e.label=='Explore the workflow without an account' for e in app.expander)
+    assert any(e.label=='Administrator setup' for e in app.expander)
+    assert not app.sidebar.radio
+    h=Hospital(path)
+    assert not h.records('SELECT * FROM patients')
+    assert not h.records('SELECT * FROM staff_users')
+
 @pytest.fixture
 def ui(tmp_path,monkeypatch):
     path=str(tmp_path/'ui.db')
