@@ -170,7 +170,11 @@ elif page=='Doctor sessions':
         capacity=st.number_input('Booking capacity',min_value=0,max_value=100,value=3)
         if st.form_submit_button('Save session',type='primary'):
             act(lambda:hospital.set_session(doctor,date.isoformat(),capacity),'Session saved; eligible waitlist entries checked.')
-    st.dataframe(hospital.records('''SELECT s.service_date,d.name,d.specialty,s.capacity FROM sessions s JOIN doctors d USING(doctor_id) ORDER BY s.service_date,d.name'''),hide_index=True,use_container_width=True)
+    session_rows=hospital.records('''SELECT s.service_date,d.name,d.specialty,s.capacity FROM sessions s JOIN doctors d USING(doctor_id) ORDER BY s.service_date,d.name''')
+    if session_rows:
+        st.dataframe(session_rows,hide_index=True,use_container_width=True)
+    else:
+        st.info('No doctor sessions yet. Choose a doctor, date and capacity above, then save the session.')
     st.subheader('Working hours, leave and breaks')
     sessions=hospital.records('SELECT * FROM sessions ORDER BY service_date DESC,doctor_id')
     if sessions:
@@ -369,14 +373,31 @@ elif page=='Agent decisions':
     else:
         st.success('All recorded events have been processed.')
     st.subheader('Decision history')
-    st.dataframe(hospital.records('SELECT created_at,agent,entity_id,reason,event_id FROM decisions ORDER BY decision_id DESC LIMIT 200'),hide_index=True,use_container_width=True)
+    decisions=hospital.records('SELECT created_at,agent,entity_id,reason,event_id FROM decisions ORDER BY decision_id DESC LIMIT 200')
+    if decisions:
+        st.dataframe(decisions,hide_index=True,use_container_width=True)
+    else:
+        st.info('No agent decisions yet. Decisions appear as bookings and care events are processed.')
     st.subheader('Email delivery')
     st.caption('Sending is '+('configured' if notifications.configured() else 'disabled')+'. Run the v2 worker for unattended checks. ACCEPTED means provider acceptance, not confirmed inbox delivery. SENDING or REVIEW_REQUIRED needs provider verification before retrying.')
-    st.dataframe(hospital.records('SELECT appointment_id,appointment_date,status,error_code,updated_at FROM notifications ORDER BY updated_at DESC LIMIT 100'),hide_index=True)
+    deliveries=hospital.records('SELECT appointment_id,appointment_date,status,error_code,updated_at FROM notifications ORDER BY updated_at DESC LIMIT 100')
+    if deliveries:
+        st.dataframe(deliveries,hide_index=True,use_container_width=True)
+    else:
+        st.info('No email delivery attempts recorded.')
     st.subheader('Staff audit')
-    st.dataframe(hospital.records('SELECT user_id,action,outcome,created_at FROM staff_audit ORDER BY audit_id DESC LIMIT 100'),hide_index=True)
+    audit_rows=hospital.records('SELECT user_id,action,outcome,created_at FROM staff_audit ORDER BY audit_id DESC LIMIT 100')
+    if audit_rows:
+        st.dataframe(audit_rows,hide_index=True,use_container_width=True)
+    else:
+        st.info('No staff activity recorded yet.')
     st.caption('Event actor IDs identify the initiating staff account; null identifies older events or trusted maintenance. Background decisions retain their triggering event link.')
-    st.dataframe(hospital.records('SELECT event_id,kind,entity_id,actor_id,created_at FROM events ORDER BY event_id DESC LIMIT 100'),hide_index=True)
+    st.subheader('Workflow events')
+    event_rows=hospital.records('SELECT event_id,kind,entity_id,actor_id,created_at FROM events ORDER BY event_id DESC LIMIT 100')
+    if event_rows:
+        st.dataframe(event_rows,hide_index=True,use_container_width=True)
+    else:
+        st.info('No workflow events yet. Register a patient or configure a doctor session to begin.')
 
 elif page=='Staff management':
     staff_management(core.path,st.session_state.staff_token)

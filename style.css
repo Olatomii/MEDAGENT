@@ -7,7 +7,7 @@ html, body, button, input, textarea { font-family: "Segoe UI", system-ui, sans-s
 h1 { font-size: 2rem !important; font-weight: 700 !important; letter-spacing: -.04em; padding-bottom: .25rem !important; }
 h2 { font-size: 1.25rem !important; font-weight: 650 !important; }
 h3 { font-size: 1.125rem !important; }
-[data-testid="stCaptionContainer"] { color: var(--muted); }
+[data-testid="stCaptionContainer"] { color: var(--muted); opacity: 1 !important; }
 hr { border-color: var(--line); margin: 1rem 0; }
 [data-testid="stSidebar"] { background: var(--surface); border-right: 1px solid var(--line); }
 [data-testid="stSidebarContent"] { padding-top: 1rem; }
@@ -59,4 +59,14 @@ button:focus-visible, input:focus-visible, [role="radiogroup"] label:focus-withi
     [data-testid="stMarkdownContainer"] p,
     [data-testid="stCaptionContainer"] { overflow-wrap: anywhere; }
     input, textarea { font-size: 16px !important; }
+}
+
+/* Keep control boundaries visible on both white forms and the page canvas. */
+[data-testid="stTextInput"] [data-baseweb="input"],
+[data-testid="stNumberInput"] [data-baseweb="input"],
+[data-testid="stDateInput"] [data-baseweb="input"],
+[data-testid="stTimeInput"] [data-baseweb="select"] > div,
+[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+[data-testid="stTextArea"] [data-baseweb="textarea"] {
+    border: 1px solid #718590 !important;
 }
