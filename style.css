@@ -62,6 +62,9 @@ button:focus-visible, input:focus-visible, [role="radiogroup"] label:focus-withi
 }
 
 /* Keep control boundaries visible on both white forms and the page canvas. */
+[data-testid="stTextInputRootElement"],
+[data-testid="stNumberInputContainer"],
+[data-testid="stTextAreaRootElement"],
 [data-testid="stTextInput"] [data-baseweb="input"],
 [data-testid="stNumberInput"] [data-baseweb="input"],
 [data-testid="stDateInput"] [data-baseweb="input"],
