@@ -1,13 +1,13 @@
-# Patient and agent foundation — integrated development version
+# Patient and agent architecture
 
 See `INTEGRATION.md` for the billing, vitals, ward and reminder integration,
 worker commands, migration behavior and delivery limitations.
 Staff sign-in is now required. Follow `STAFF_ACCESS.md` to provision the first
 administrator on the trusted host; there are no default accounts or passwords.
 
-The preview selects this application with `MEDAGENT_APP_VERSION=v2`.
+Both hosted sites select this application with `MEDAGENT_APP_VERSION=v2`.
 Run `python -m streamlit run app_v2.py` from the repository directory.
-The original production branch and database remain separate. V2 uses `MEDAGENT_V2_DB_PATH` (default `medagent_v2.db`).
+The legacy entry point remains available for rollback; its database is separate. V2 uses `MEDAGENT_V2_DB_PATH` (default `medagent_v2.db`).
 Do not point it at the original database. Use synthetic data while developing.
 
 ## Try the complete journey

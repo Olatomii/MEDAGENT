@@ -1,17 +1,16 @@
-# Staff access in the development application
+# Staff and patient access
 
 `app_v2.py` now requires staff sign-in before displaying patients or executing
-application commands. The preview selects v2 through `MEDAGENT_APP_VERSION=v2`;
-the original production branch remains separate.
+application commands. Both hosted sites select v2 through `MEDAGENT_APP_VERSION=v2`.
 No staff accounts or default credentials are committed or created automatically.
 A persistent database is required to retain accounts.
 
-The preview supports protected initial setup: copy `MEDAGENT_SETUP_TOKEN` from
+Open **Administrator setup** on the public introduction for protected initial setup: copy `MEDAGENT_SETUP_TOKEN` from
 the service's private Render Environment settings into the initial setup screen,
 then choose your username and password. The token is randomly provisioned outside
 Git. Setup only works while the staff table is empty and is serialized against
 concurrent attempts. Remove the token after setup on persistent hosting. On the
-current ephemeral free preview, database loss can reopen setup; only someone with
+current ephemeral free hosting, database loss can reopen setup; only someone with
 the private token can create the first account again. Do not use real patient data.
 
 `MEDAGENT_APP_VERSION=v2` switches the existing app.py deployment entry point to
