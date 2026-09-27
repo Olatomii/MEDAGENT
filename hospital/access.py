@@ -7,23 +7,22 @@ from .database import connection
 
 actor=ContextVar('staff_actor',default=None)
 PAGES={
-    'admin':['Overview','Patients','Appointments','Care workspace','Diagnostics / Laboratory','Pharmacy','Wards','Doctor sessions','Agent decisions','Staff management','Evaluation & backup'],
+    'admin':['Overview','Patients','Appointments','Care workspace','Wards','Doctor sessions','Agent decisions','Staff management','Evaluation & backup'],
     'front_desk':['Overview','Patients','Appointments'],
     'nurse':['Overview','Care workspace'],
     'physician':['Overview','Care workspace','Wards'],
-    'laboratory':['Diagnostics / Laboratory'],
-    'pharmacy':['Pharmacy'],
+    'pharmacy':['Care workspace'],
     'ward':['Wards'],
 }
 METHODS={
     'front_desk':{'create_patient','update_email','book','reschedule','close_booking','check_in','clear_billing','reminder_preference'},
     'nurse':{'record_vitals'},'physician':{'transition','admit','start_consultation'},
-    'laboratory':{'transition'},'pharmacy':{'transition'},'ward':{'transition','admit'},
+    'pharmacy':{'transition'},'ward':{'transition','admit'},
 }
 ALL_METHODS=set().union(*METHODS.values())|{'set_session','set_ward_capacity','set_availability','add_break','remove_break'}
 COMMON={'patients','appointments','doctors','sessions','doctor_breaks'}
 CLINICAL=COMMON|{'visits','vitals','wards','consultations'}
-TABLES={'front_desk':COMMON,'nurse':CLINICAL,'physician':CLINICAL,'laboratory':CLINICAL,'pharmacy':CLINICAL,'ward':CLINICAL,
+TABLES={'front_desk':COMMON,'nurse':CLINICAL,'physician':CLINICAL,'pharmacy':CLINICAL,'ward':CLINICAL,
         'admin':CLINICAL|{'events','decisions','notifications','legacy_imports','legacy_records','staff_audit'}}
 
 
@@ -79,9 +78,7 @@ class StaffHospital:
                 values=bound.arguments
                 visits=self._core.records('SELECT state,ward_id FROM visits WHERE visit_id=?',(values['visit_id'],))
                 state=visits[0]['state'] if visits else None
-                if user['role']=='laboratory':
-                    allowed=name=='transition' and state=='DIAGNOSTICS' and values.get('target')=='CONSULTATION'
-                elif user['role']=='pharmacy':
+                if user['role']=='pharmacy':
                     allowed=state=='PHARMACY' and values.get('target')=='COMPLETED'
                 elif user['role']=='ward':
                     allowed=state=='ADMITTED' and (name=='admit' and visits[0]['ward_id'] is None or values.get('target') in ('COMPLETED','TRANSFER_REQUIRED'))

@@ -88,30 +88,6 @@ def test_pharmacy_cannot_act_on_consultation(core):
     assert core.records('SELECT state FROM visits')[0]['state']=='COMPLETED'
 
 
-def test_laboratory_and_pharmacy_have_separate_workspaces_and_scoped_transitions(core):
-    lab=staff(core,'laboratory')
-    lab.authorize_page('Diagnostics / Laboratory')
-    with pytest.raises(AccessDenied): lab.authorize_page('Care workspace')
-    pharmacy=staff(core,'pharmacy')
-    pharmacy.authorize_page('Pharmacy')
-    with pytest.raises(AccessDenied): pharmacy.authorize_page('Care workspace')
-
-    core.set_session(1,core.today(),1)
-    p=core.create_patient('Lab patient',30,'Female')
-    a=core.book(p,core.today(),'General Practice')
-    core.clear_billing(a,'TEST')
-    v=core.check_in(a)
-    core.record_vitals(v,0,120,37,75,98,16)
-    core.transition(v,1,'DIAGNOSTICS','Full blood count')
-
-    with pytest.raises(AccessDenied): lab.transition(v,2,'COMPLETED','Not allowed')
-    lab.transition(v,2,'CONSULTATION','Results normal')
-    core.transition(v,3,'PHARMACY','Prescription')
-    with pytest.raises(AccessDenied): lab.transition(v,4,'CONSULTATION','Not a lab visit')
-    pharmacy.transition(v,4,'COMPLETED','Dispensed')
-    assert core.records('SELECT state FROM visits WHERE visit_id=?',(v,))[0]['state']=='COMPLETED'
-
-
 def test_last_admin_cannot_be_disabled(core):
     staff(core,'admin')
     with pytest.raises(ValueError): disable_staff(core.path,'admin')
