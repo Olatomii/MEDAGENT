@@ -6,7 +6,7 @@ import time
 import os
 from .database import connection
 
-ROLES=('admin','front_desk','nurse','physician','pharmacy','ward')
+ROLES=('admin','front_desk','nurse','physician','laboratory','pharmacy','ward')
 SESSION_SECONDS=8*60*60
 ITERATIONS=600_000
 
