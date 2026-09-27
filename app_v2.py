@@ -273,16 +273,16 @@ elif page=='Appointments':
                     act(lambda:hospital.close_booking(a['appointment_id'],'MISSED'),'Appointment marked missed.')
 
 elif page=='Care workspace':
-    st.caption('Only checked-in patients appear here. Clinical actions are chosen by staff; the system validates each transition.')
+    st.caption('Assessment and physician consultation happen here. Diagnostics, pharmacy and ward care have their own workspaces.')
     visits=hospital.records('''SELECT v.*,d.specialty,p.name,d.name AS doctor FROM visits v JOIN appointments a USING(appointment_id)
         JOIN patients p USING(patient_id) LEFT JOIN doctors d ON d.doctor_id=v.assigned_doctor_id
-        WHERE v.state NOT IN ('COMPLETED','TRANSFER_REQUIRED','ADMITTED')
+        WHERE v.state IN ('ASSESSMENT','CONSULTATION')
         ORDER BY v.urgency,v.checked_in_at,v.rowid''')
-    visible={'nurse':{'ASSESSMENT'},'physician':{'CONSULTATION','DIAGNOSTICS'},'pharmacy':{'PHARMACY'}}
+    visible={'nurse':{'ASSESSMENT'},'physician':{'CONSULTATION'}}
     if staff['role']!='admin':
         visits=[v for v in visits if v['state'] in visible.get(staff['role'],set())]
     if not visits:
-        st.info('No active visits. Check in a confirmed appointment to begin.')
+        st.info('No patients are waiting for assessment or consultation.')
     for v in visits:
         with st.expander(f"{v['name']} · {v['state']} · urgency {v['urgency']}",expanded=True):
             st.caption(v['visit_id']+' · '+str(v['specialty'])+' · '+str(v['doctor']))
@@ -319,7 +319,7 @@ elif page=='Care workspace':
                         act(lambda:hospital.record_vitals(v['visit_id'],v['version'],bp,temperature,pulse,oxygen,respiration),'Vitals recorded. Review the updated care state or transfer queue.')
                 continue
             target=st.selectbox('Next care step',sorted(TRANSITIONS[v['state']]),key='target'+widget_id)
-            notes=st.text_area('Diagnostic results' if v['state']=='DIAGNOSTICS' else 'Staff notes / prescription / directive',key='notes'+widget_id)
+            notes=st.text_area('Staff notes / prescription / directive',key='notes'+widget_id)
             ward=None
             if target=='ADMITTED':
                 wards=hospital.records('SELECT * FROM wards ORDER BY ward_id')
@@ -335,6 +335,45 @@ elif page=='Care workspace':
     if transfers:
         st.warning('Transfer-required records: these indicate a need for staff action, not a completed external transfer.')
         st.dataframe(transfers,hide_index=True)
+
+elif page=='Diagnostics / Laboratory':
+    st.caption('Patients sent for investigations appear here. Record the result to return the patient to physician consultation.')
+    visits=hospital.records('''SELECT v.*,d.specialty,p.name,d.name AS doctor FROM visits v JOIN appointments a USING(appointment_id)
+        JOIN patients p USING(patient_id) LEFT JOIN doctors d ON d.doctor_id=v.assigned_doctor_id
+        WHERE v.state='DIAGNOSTICS' ORDER BY v.urgency,v.checked_in_at,v.rowid''')
+    if not visits:
+        st.info('No patients are waiting for diagnostics or laboratory results.')
+    for v in visits:
+        with st.expander(f"{v['name']} · {v['specialty']} · urgency {v['urgency']}",expanded=True):
+            st.caption(v['visit_id']+' · Assigned doctor: '+str(v['doctor']))
+            st.markdown('**Investigation request / clinical notes**')
+            st.text(v['notes'] or 'No investigation directive recorded.')
+            readings=hospital.records('SELECT systolic,temperature,heart_rate,spo2,respiratory_rate,flagged,recorded_at FROM vitals WHERE visit_id=? ORDER BY vital_id DESC',(v['visit_id'],))
+            if readings:
+                st.dataframe(readings,hide_index=True)
+            key=v['visit_id']+str(v['version'])
+            with st.form('diagnostic-result'+key):
+                results=st.text_area('Diagnostic / laboratory results',placeholder='Enter the investigation result or laboratory finding.')
+                if st.form_submit_button('Record results & return to doctor',type='primary'):
+                    act(lambda:hospital.transition(v['visit_id'],v['version'],'CONSULTATION',results),'Diagnostic results recorded. Patient returned to consultation.')
+
+elif page=='Pharmacy':
+    st.caption('Patients sent for medication dispensing appear here. Completing dispensing closes the patient visit.')
+    visits=hospital.records('''SELECT v.*,d.specialty,p.name,d.name AS doctor FROM visits v JOIN appointments a USING(appointment_id)
+        JOIN patients p USING(patient_id) LEFT JOIN doctors d ON d.doctor_id=v.assigned_doctor_id
+        WHERE v.state='PHARMACY' ORDER BY v.urgency,v.checked_in_at,v.rowid''')
+    if not visits:
+        st.info('No patients are waiting at the pharmacy.')
+    for v in visits:
+        with st.expander(f"{v['name']} · {v['specialty']} · urgency {v['urgency']}",expanded=True):
+            st.caption(v['visit_id']+' · Prescribing doctor: '+str(v['doctor']))
+            st.markdown('**Prescription / physician directive**')
+            st.text(v['notes'] or 'No prescription directive recorded.')
+            key=v['visit_id']+str(v['version'])
+            with st.form('pharmacy-dispense'+key):
+                notes=st.text_area('Dispensing notes (optional)',placeholder='Medication dispensed, counselling or other pharmacy notes.')
+                if st.form_submit_button('Dispense medication & complete visit',type='primary'):
+                    act(lambda:hospital.transition(v['visit_id'],v['version'],'COMPLETED',notes),'Medication dispensing recorded. Visit completed.')
 
 elif page=='Wards':
     wards=hospital.records('''SELECT w.*,COUNT(v.visit_id) AS occupied FROM wards w LEFT JOIN visits v
