@@ -5,7 +5,7 @@ application commands. Both hosted sites select v2 through `MEDAGENT_APP_VERSION=
 No staff accounts or default credentials are committed or created automatically.
 A persistent database is required to retain accounts.
 
-Open **Administrator setup** on the public introduction for protected initial setup: copy `MEDAGENT_SETUP_TOKEN` from
+Open **Staff Portal**, then **Administrator setup** for protected initial setup: copy `MEDAGENT_SETUP_TOKEN` from
 the service's private Render Environment settings into the initial setup screen,
 then choose your username and password. The token is randomly provisioned outside
 Git. Setup only works while the staff table is empty and is serialized against

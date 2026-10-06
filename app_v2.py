@@ -19,8 +19,13 @@ st.markdown('<style>'+Path(__file__).with_name('style.css').read_text()+'</style
 core=Hospital(os.getenv('MEDAGENT_V2_DB_PATH','medagent_v2.db'))
 initialize_auth(core.path)
 if not st.session_state.get('staff_token'):
-    introduction()
+    route = introduction()
+    if route not in ('Patient Portal', 'Staff Portal'):
+        st.stop()
     if not core.records('SELECT user_id FROM staff_users LIMIT 1'):
+        if route == 'Patient Portal':
+            st.info('The patient portal is not ready yet. You can explore the demo while setup is completed.')
+            st.stop()
         with st.expander('Administrator setup'):
             st.title('Set up your administrator account')
             st.info('Retrieve MEDAGENT_SETUP_TOKEN from this service’s Environment settings in Render. It is a private setup code, not your new password.')
@@ -41,7 +46,8 @@ if not st.session_state.get('staff_token'):
                         st.rerun()
             st.caption('Setup is locked after the first account is created. There are no default credentials.')
         st.stop()
-    st.title('MedAgent sign-in')
+    st.title(route)
+    st.caption('Sign in with your account to open your workspace.')
     with st.form('signin',clear_on_submit=True):
         username=st.text_input('Username')
         password=st.text_input('Password',type='password')
@@ -54,20 +60,21 @@ if not st.session_state.get('staff_token'):
                 st.session_state.clear()
                 st.session_state.staff_token=token
                 st.rerun()
-    registration(core.path)
-    with st.expander('Activate patient invitation'):
-        with st.form('activate-patient',clear_on_submit=True):
-            invitation=st.text_input('Private invitation code',type='password')
-            new_username=st.text_input('Choose patient username')
-            new_password=st.text_input('Choose patient password (12–256 characters)',type='password')
-            if st.form_submit_button('Activate patient account'):
-                try:
-                    accept_invitation(core.path,invitation,new_username,new_password)
-                except ValueError as exc:
-                    st.error(str(exc))
-                else:
-                    st.success('Patient account created. Sign in above.')
-    st.caption('Staff accounts are created by administrators. New patients can register; existing patients should request an invitation.')
+    if route == 'Patient Portal':
+        registration(core.path)
+        with st.expander('Activate patient invitation'):
+            with st.form('activate-patient',clear_on_submit=True):
+                invitation=st.text_input('Private invitation code',type='password')
+                new_username=st.text_input('Choose patient username')
+                new_password=st.text_input('Choose patient password (12–256 characters)',type='password')
+                if st.form_submit_button('Activate patient account'):
+                    try:
+                        accept_invitation(core.path,invitation,new_username,new_password)
+                    except ValueError as exc:
+                        st.error(str(exc))
+                    else:
+                        st.success('Patient account created. Sign in above.')
+        st.caption('Staff accounts are created by administrators. New patients can register; existing patients should request an invitation.')
     st.stop()
 hospital=StaffHospital(core,st.session_state.staff_token)
 try:
