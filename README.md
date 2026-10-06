@@ -10,8 +10,9 @@ care transitions and waitlist allocation through recorded workflow events.
 
 ## Explore the project
 
-The public introduction includes a workflow walkthrough without requiring an
-account. Patient and staff records require sign-in. A fresh deployment may need
+The homepage offers **Patient Portal**, **Staff Portal** and **Explore Demo**.
+Explore Demo opens a fictional, read-only patient journey without an account.
+**About this demo** explains sample data and clinical limitations. Patient and staff records require sign-in. A fresh deployment may need
 the owner to complete administrator setup before accounts can be used.
 There are no shared administrator credentials.
 

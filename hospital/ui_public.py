@@ -1,33 +1,45 @@
-"""Public project overview; no patient records or privileged actions."""
+"""Public entry page and a fictional, read-only patient journey."""
 import streamlit as st
 
 
 def introduction():
-    st.header('MedAgent Sync')
-    st.subheader('Agent-based hospital appointment and patient management')
-    st.write('A working prototype connecting appointment booking, patient arrival, '
-             'care coordination and hospital capacity through traceable workflow events.')
-    left, middle, right = st.columns(3)
-    with left:
-        st.markdown('**Appointments**')
-        st.write('Book by department, manage daily capacity and promote eligible waitlisted patients when a place opens.')
-    with middle:
-        st.markdown('**Patient journey**')
-        st.write('Follow a visit through check-in, assessment, consultation, diagnostics, pharmacy and ward care.')
-    with right:
-        st.markdown('**Accountable decisions**')
-        st.write('Inspect the event, affected record and reason behind each recorded agent decision.')
-    with st.expander('Explore the workflow without an account'):
-        st.markdown('''1. A staff member configures a doctor’s session capacity.
-2. A patient requests an appointment; capacity determines confirmation or waitlisting.
-3. A cancellation releases a place. The waitlist agent checks urgency and waiting order.
-4. Staff check in the patient and record care progress. Consultation length is not fixed.
-5. Workflow events and decision reasons make the process reviewable.
-
-Agents are rule-based handlers in a shared Python process. The waitlist agent
-allocates released places; other handlers record appointment and care decisions.
-Staff remain responsible for clinical actions. This walkthrough does not create records.''')
-    st.caption('Portfolio prototype · Use fictional patients only. Clinical rules are simulation logic, '
-               'not validated medical guidance. Hosted records may reset after a restart or deployment; '
-               'email delivery is disabled on the public demo.')
-    st.divider()
+    st.header('MEDAGENT')
+    st.subheader('Hospital Appointment & Patient Management')
+    st.write('Your appointments, care and patient records in one place.')
+    for column, label in zip(st.columns(3), ('Patient Portal', 'Staff Portal', 'Explore Demo')):
+        if column.button(label, key='entry_'+label, use_container_width=True):
+            st.session_state.public_route = label
+    st.caption('Portfolio demonstration using sample data. Not intended for clinical use.')
+    with st.expander('About this demo'):
+        st.write('MedAgent demonstrates appointment booking, waiting lists, patient check-in, '
+                 'care coordination and staff access. Use fictional patient details only.')
+        st.write('Explore Demo shows a fictional patient journey without an account. '
+                 'Its sample records are illustrative and do not change any patient records.')
+        st.write('Clinical workflows and urgency rules are simulated and have not been clinically '
+                 'validated. This application must not be used for diagnosis, treatment or real patient care.')
+        st.caption('Saved demo accounts and records may reset. Email delivery is disabled on the hosted demo.')
+    route = st.session_state.get('public_route')
+    if route == 'Explore Demo':
+        st.divider()
+        st.subheader('A patient’s journey')
+        st.caption('Fictional sample · Read-only walkthrough')
+        stage = st.radio('Explore a stage', ('Appointment', 'Arrival', 'Consultation', 'Follow-up'), horizontal=True)
+        examples = {
+            'Appointment': ('Appointment confirmed', 'Alex Morgan · General Practice',
+                            'A place is reserved in the doctor’s session. When a session is full, a new request joins the waiting list.'),
+            'Arrival': ('Checked in', 'Alex Morgan · Waiting for assessment',
+                        'Staff confirm arrival and prepare the visit. Appointment and visit history stay linked to the patient.'),
+            'Consultation': ('Consultation in progress', 'Alex Morgan · With the care team',
+                             'Staff record progress and coordinate any diagnostics or pharmacy steps. Consultation length is not fixed.'),
+            'Follow-up': ('Visit completed', 'Alex Morgan · Visit history updated',
+                          'The completed visit remains in the patient’s history. A future appointment can be requested when needed.'),
+        }
+        status, detail, explanation = examples[stage]
+        with st.container(border=True):
+            st.markdown('**'+status+'**')
+            st.write(detail)
+            st.write(explanation)
+        with st.expander('What happens when a place becomes available?'):
+            st.write('When an eligible booking is cancelled, the waiting list is checked by urgency '
+                     'and waiting order. A patient can be offered the available place, and the reason is recorded.')
+    return route

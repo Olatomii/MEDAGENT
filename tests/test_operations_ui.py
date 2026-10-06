@@ -15,8 +15,16 @@ def test_public_overview_on_fresh_database(tmp_path,monkeypatch):
     monkeypatch.setenv('MEDAGENT_V2_DB_PATH',path)
     app=AppTest.from_file(APP,default_timeout=20).run()
     assert not app.exception
-    assert any(h.value=='MedAgent Sync' for h in app.header)
-    assert any(e.label=='Explore the workflow without an account' for e in app.expander)
+    assert any(h.value=='MEDAGENT' for h in app.header)
+    assert not app.text_input
+    next(b for b in app.button if b.label=='Explore Demo').click().run()
+    assert not app.exception
+    for stage in ('Appointment','Arrival','Consultation','Follow-up'):
+        app.radio[0].set_value(stage).run()
+        assert not app.exception
+    next(b for b in app.button if b.label=='Patient Portal').click().run()
+    assert app.info and not app.text_input
+    next(b for b in app.button if b.label=='Staff Portal').click().run()
     assert any(e.label=='Administrator setup' for e in app.expander)
     assert not app.sidebar.radio
     h=Hospital(path)
@@ -58,6 +66,7 @@ def test_patient_activation_and_scoped_screen(ui):
     admin=login(h.path,'owner',PASSWORD)
     code=invite_patient(h.path,admin,p)
     app=AppTest.from_file(APP,default_timeout=20).run()
+    next(b for b in app.button if b.label=='Patient Portal').click().run()
     by_label=lambda label:next(w for w in app.text_input if w.label==label)
     by_label('Private invitation code').set_value(code)
     by_label('Choose patient username').set_value('patient')
@@ -83,13 +92,16 @@ def test_temporary_password_ui_gate(ui):
     for widget in app.text_input: widget.set_value(values[widget.label])
     next(b for b in app.button if b.label=='Change password and sign out').click().run()
     assert not app.exception
-    assert app.title[0].value=='MedAgent sign-in'
+    assert not app.sidebar.radio
+    next(b for b in app.button if b.label=='Staff Portal').click().run()
+    assert app.title[0].value=='Staff Portal'
     assert login(h.path,'nurse','Changed-password-42')
 
 
 def test_self_registration_signin_and_booking(ui):
     h,_=ui
     app=AppTest.from_file(APP,default_timeout=20).run()
+    next(b for b in app.button if b.label=='Patient Portal').click().run()
     values={'Your full name':'New portal patient','Your email address':'new@example.com','Your new username':'newportal',
             'Your new password (12–256 characters)':PASSWORD,'Confirm your new password':PASSWORD}
     for w in app.text_input:
