@@ -24,21 +24,21 @@ def available_doctor(conn, specialty, date):
         LEFT JOIN appointments a ON a.doctor_id=s.doctor_id AND a.service_date=s.service_date
           AND a.status IN ('CONFIRMED','CHECKED_IN','FULFILLED')
         WHERE d.specialty=? AND s.service_date=? AND s.enabled=1
-        GROUP BY s.doctor_id HAVING booked<s.capacity ORDER BY booked,s.doctor_id LIMIT 1''',
+        GROUP BY s.doctor_id,s.capacity HAVING COUNT(a.appointment_id)<s.capacity ORDER BY booked,s.doctor_id LIMIT 1''',
         (specialty,date)).fetchone()
 
 
 def emergency_doctor(conn,date):
     # Emergency session capacity means concurrent places, including reservations
     # and unresolved visits from earlier dates. Admission/completion releases it.
-    return conn.execute('''SELECT s.doctor_id,s.capacity,
+    return conn.execute('''SELECT * FROM (SELECT s.doctor_id,s.capacity,
         ((SELECT COUNT(*) FROM appointments a WHERE a.doctor_id=s.doctor_id
             AND a.specialty='Emergency / Trauma' AND a.status='CONFIRMED') +
          (SELECT COUNT(*) FROM visits v WHERE v.assigned_doctor_id=s.doctor_id
             AND v.state NOT IN ('ADMITTED','COMPLETED','TRANSFER_REQUIRED'))) AS booked
         FROM sessions s JOIN doctors d USING(doctor_id)
         WHERE d.specialty='Emergency / Trauma' AND s.service_date=?
-        AND s.enabled=1 AND s.capacity>0 AND booked<s.capacity ORDER BY booked,s.doctor_id LIMIT 1''',(date,)).fetchone()
+        AND s.enabled=1 AND s.capacity>0) AS availability WHERE booked<capacity ORDER BY booked,doctor_id LIMIT 1''',(date,)).fetchone()
 
 
 class WaitlistAgent:

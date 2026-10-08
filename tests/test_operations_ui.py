@@ -10,9 +10,10 @@ PASSWORD='Synthetic-test-password-42'
 APP=str(Path(__file__).resolve().parents[1]/'app_v2.py')
 
 
-def test_public_overview_on_fresh_database(tmp_path,monkeypatch):
-    path=str(tmp_path/'fresh.db')
+def test_public_overview_on_fresh_database(database_path,monkeypatch):
+    path=database_path
     monkeypatch.setenv('MEDAGENT_V2_DB_PATH',path)
+    monkeypatch.delenv('MEDAGENT_DATABASE_URL',raising=False)
     app=AppTest.from_file(APP,default_timeout=20).run()
     assert not app.exception
     assert any(h.value=='MEDAGENT' for h in app.header)
@@ -32,9 +33,10 @@ def test_public_overview_on_fresh_database(tmp_path,monkeypatch):
     assert not h.records('SELECT * FROM staff_users')
 
 @pytest.fixture
-def ui(tmp_path,monkeypatch):
-    path=str(tmp_path/'ui.db')
+def ui(database_path,monkeypatch):
+    path=database_path
     monkeypatch.setenv('MEDAGENT_V2_DB_PATH',path)
+    monkeypatch.delenv('MEDAGENT_DATABASE_URL',raising=False)
     h=Hospital(path)
     initialize_auth(path)
     create_staff(path,'owner',PASSWORD,'admin')

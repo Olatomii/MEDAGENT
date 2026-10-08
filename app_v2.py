@@ -4,6 +4,7 @@ import datetime as dt
 from pathlib import Path
 import streamlit as st
 from hospital.service import Hospital, TRANSITIONS
+from hospital.database import configured_database
 from hospital.agents import process_events
 from hospital import notifications
 from reminders import valid_email
@@ -16,8 +17,19 @@ from hospital.ui_accounts import password_form,staff_management,invite_panel,pat
 
 st.set_page_config(page_title='MedAgent | Patient workspace',page_icon='✚',layout='wide')
 st.markdown('<style>'+Path(__file__).with_name('style.css').read_text()+'</style>',unsafe_allow_html=True)
-core=Hospital(os.getenv('MEDAGENT_V2_DB_PATH','medagent_v2.db'))
-initialize_auth(core.path)
+@st.cache_resource(show_spinner=False)
+def initialize_application(path):
+    core = Hospital(path)
+    initialize_auth(core.path)
+    from hospital.experience import initialize
+    initialize(path)
+    return core
+
+try:
+    core = initialize_application(configured_database())
+except Exception:
+    st.error('The database is temporarily unavailable. Please try again shortly. Your saved account has not been reset.')
+    st.stop()
 if not st.session_state.get('staff_token'):
     route = introduction()
     if route not in ('Patient Portal', 'Staff Portal'):

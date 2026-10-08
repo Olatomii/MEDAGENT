@@ -3,7 +3,7 @@ import inspect
 import sqlite3
 from contextvars import ContextVar
 from .auth import authenticate,AccessDenied
-from .database import connection
+from .database import connection,is_postgres
 
 actor=ContextVar('staff_actor',default=None)
 PAGES={
@@ -58,6 +58,15 @@ class StaffHospital:
             if action==sqlite3.SQLITE_READ:
                 return sqlite3.SQLITE_OK if arg1 in allowed else sqlite3.SQLITE_DENY
             return sqlite3.SQLITE_OK if action in (sqlite3.SQLITE_SELECT,sqlite3.SQLITE_FUNCTION) else sqlite3.SQLITE_DENY
+        if is_postgres(self.path):
+            from .postgres import authorize_read
+            import psycopg
+            authorize_read(query, allowed)
+            with connection(self.path) as conn:
+                try:
+                    return [dict(r) for r in conn.execute(query, params)]
+                except psycopg.DatabaseError as exc:
+                    raise AccessDenied('This data request is not permitted for your role.') from exc
         with connection(self.path) as conn:
             conn.set_authorizer(authorize)
             try:

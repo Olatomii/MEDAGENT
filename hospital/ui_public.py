@@ -17,7 +17,7 @@ def introduction():
                  'Its sample records are illustrative and do not change any patient records.')
         st.write('Clinical workflows and urgency rules are simulated and have not been clinically '
                  'validated. This application must not be used for diagnosis, treatment or real patient care.')
-        st.caption('Saved demo accounts and records may reset. Email delivery is disabled on the hosted demo.')
+        st.caption('Email delivery is disabled on the hosted demo.')
     route = st.session_state.get('public_route')
     if route == 'Explore Demo':
         st.divider()

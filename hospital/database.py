@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -7,8 +8,35 @@ def identifier(prefix):
     return prefix + '-' + uuid.uuid4().hex.upper()
 
 
+def is_postgres(path):
+    return str(path).startswith(('postgresql://', 'postgres://'))
+
+
+def configured_database():
+    # A configured remote database must never silently fall back to a fresh file.
+    url = os.getenv('MEDAGENT_DATABASE_URL', '').strip()
+    if url:
+        if not is_postgres(url):
+            raise ValueError('MEDAGENT_DATABASE_URL must be a PostgreSQL connection URL.')
+        return url
+    return os.getenv('MEDAGENT_V2_DB_PATH', 'medagent_v2.db')
+
+
 @contextmanager
 def connection(path, write=False):
+    if is_postgres(path):
+        from .postgres import pool, Connection
+        with pool(str(path)).connection() as raw:
+            with raw.transaction():
+                raw.execute("SET LOCAL TIME ZONE 'UTC'")
+                raw.execute("SET LOCAL statement_timeout = '30s'")
+                raw.execute("SET LOCAL lock_timeout = '15s'")
+                if write:
+                    raw.execute('SELECT pg_advisory_xact_lock(1296385095, 1)')
+                else:
+                    raw.execute('SET TRANSACTION READ ONLY')
+                yield Connection(raw)
+        return
     conn = sqlite3.connect(path, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys=ON')

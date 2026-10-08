@@ -7,8 +7,8 @@ from hospital.notifications import dispatch,suggested_email
 
 
 @pytest.fixture
-def h(tmp_path):
-    return Hospital(str(tmp_path/'care.db'),today=lambda:'2026-10-01')
+def h(database_path):
+    return Hospital(database_path,today=lambda:'2026-10-01')
 
 
 def booking(h,date='2026-10-01',clear=True,consent=False):

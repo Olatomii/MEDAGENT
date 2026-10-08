@@ -8,8 +8,8 @@ PASSWORD='Synthetic-test-password-42'
 
 
 @pytest.fixture
-def core(tmp_path):
-    h=Hospital(str(tmp_path/'staff.db'))
+def core(database_path):
+    h=Hospital(database_path)
     initialize_auth(h.path)
     return h
 
