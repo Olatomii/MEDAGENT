@@ -3,7 +3,7 @@
 [![Tests](https://github.com/Olatomii/MEDAGENT/actions/workflows/tests.yml/badge.svg)](https://github.com/Olatomii/MEDAGENT/actions/workflows/tests.yml)
 
 An agent-based hospital appointment and patient management prototype built with
-Python, Streamlit and SQLite. It connects booking capacity, patient arrivals,
+Python, Streamlit and PostgreSQL (with SQLite for local development). It connects booking capacity, patient arrivals,
 care transitions and waitlist allocation through recorded workflow events.
 
 [Open the hosted application](https://medagent-jdzd.onrender.com/)
@@ -18,9 +18,10 @@ There are no shared administrator credentials.
 
 Use fictional records only. This is a software engineering prototype, not a
 clinical decision system. Triage thresholds have not been clinically validated.
-The free hosted application uses temporary storage: records and accounts may
-reset on restart or redeployment. Live email delivery is disabled. An unattended
-worker and persistent hosting are not deployed.
+The hosted application supports persistent Neon PostgreSQL storage, separate from
+Render’s temporary filesystem. Live email delivery is disabled. An unattended
+reminder worker is not deployed. Use fictional records only; persistence does not
+make this prototype suitable for clinical use.
 
 ## What it does
 
@@ -54,7 +55,7 @@ pending events and records decision reasons.
 ```mermaid
 flowchart TD
     A[Staff and patient workspaces] --> B[Access checks and domain services]
-    B --> C[SQLite records and workflow events]
+    B --> C[Database records and workflow events]
     C --> D[Event dispatcher]
     D --> E[Agent handlers]
     E --> C
@@ -88,8 +89,14 @@ The account command prompts privately for a password. Do not put credentials in
 source files or command arguments. SQLite is initialized automatically.
 
 When deploying through `app.py`, set `MEDAGENT_APP_VERSION=v2`. The v2 database
+uses `MEDAGENT_DATABASE_URL` when a PostgreSQL URL is configured. Otherwise the local
 path is controlled by `MEDAGENT_V2_DB_PATH` and defaults to `medagent_v2.db`.
+Set the database URL privately in Render’s environment settings, never in Git.
+Main and preview must use separate databases. If PostgreSQL is unreachable, the
+application reports an outage instead of creating an empty local database.
 Browser-based initial setup requires a privately provisioned `MEDAGENT_SETUP_TOKEN`.
+Setup is needed once per database, not once per browser session or deployment.
+Closing the browser can end a login session; sign in again with the same account.
 Removing the version setting selects the legacy application; it does not migrate data.
 
 ## Try a complete journey
@@ -113,7 +120,22 @@ python -m pytest -q
 GitHub Actions runs the suite on pull requests and pushes to the main and preview
 branches. Tests cover scheduling, capacity, access control, care transitions,
 patient workflows, reminders, operational recovery and Streamlit screens.
-Tests use temporary databases and mocked delivery; no email credentials are needed.
+CI runs the v2 contracts against both SQLite and disposable PostgreSQL databases,
+including concurrent bookings, single-admin bootstrap, backups, staff screens and
+sign-in from a separate process. Legacy tests remain SQLite-only. Delivery is
+mocked; no email credentials are needed.
+
+PostgreSQL writes use a transaction-scoped advisory lock to preserve the existing
+serialized capacity and account-creation rules across app processes. This is
+appropriate for the small prototype; it deliberately limits write throughput.
+Staff reads use a restricted SELECT grammar and table allowlist inside read-only
+transactions. Password hashes and session tables are not exposed through it.
+
+Database backups download as SQLite snapshots, including account hashes but
+excluding active sessions and one-time codes. Treat them as private files. The
+local restore command creates a new SQLite destination; switching an existing
+hosted database requires a reviewed migration. Changing a URL does not copy old
+data automatically.
 
 ## Code map and further reading
 

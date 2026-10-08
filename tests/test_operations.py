@@ -14,8 +14,8 @@ from hospital.errors import Conflict
 PASSWORD='Synthetic-test-password-42'
 
 @pytest.fixture
-def setup(tmp_path):
-    h=Hospital(str(tmp_path/'source.db'))
+def setup(database_path):
+    h=Hospital(database_path)
     initialize_auth(h.path)
     create_staff(h.path,'owner',PASSWORD,'admin')
     return h,login(h.path,'owner',PASSWORD)

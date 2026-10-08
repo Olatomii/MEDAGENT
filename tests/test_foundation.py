@@ -9,8 +9,8 @@ from hospital.import_legacy import import_snapshot
 
 
 @pytest.fixture
-def h(tmp_path):
-    return Hospital(str(tmp_path/'next.db'),today=lambda:'2026-10-01')
+def h(database_path):
+    return Hospital(database_path,today=lambda:'2026-10-01')
 
 
 def patient(h,name='Test Patient'):

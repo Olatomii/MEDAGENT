@@ -78,11 +78,11 @@ def reassignment_options(path,token,appointment_id):
     with connection(path) as c:
         a=c.execute('SELECT * FROM appointments WHERE appointment_id=?',(appointment_id,)).fetchone()
         if not a or a['status']!='CONFIRMED' or a['urgency']<=2: return []
-        return [dict(r) for r in c.execute('''SELECT d.doctor_id,d.name,s.capacity,
+        return [dict(r) for r in c.execute('''SELECT * FROM (SELECT d.doctor_id,d.name,s.capacity,
             (SELECT COUNT(*) FROM appointments b WHERE b.doctor_id=d.doctor_id AND b.service_date=s.service_date
             AND b.status IN ('CONFIRMED','CHECKED_IN','FULFILLED')) AS booked
             FROM doctors d JOIN sessions s USING(doctor_id) WHERE d.specialty=? AND s.service_date=?
-            AND s.enabled=1 AND d.doctor_id!=? AND booked<s.capacity ORDER BY booked,d.doctor_id''',
+            AND s.enabled=1 AND d.doctor_id!=?) AS availability WHERE booked<capacity ORDER BY booked,doctor_id''',
             (a['specialty'],a['service_date'],a['doctor_id']))]
 
 

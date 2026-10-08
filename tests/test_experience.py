@@ -10,8 +10,8 @@ from hospital.errors import Conflict
 
 PW='Synthetic-test-password-42'
 @pytest.fixture
-def setup(tmp_path):
-    h=Hospital(str(tmp_path/'experience.db'))
+def setup(database_path):
+    h=Hospital(database_path)
     initialize_auth(h.path)
     create_staff(h.path,'admin',PW,'admin')
     return h,login(h.path,'admin',PW)
