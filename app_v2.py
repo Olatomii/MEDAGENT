@@ -12,6 +12,7 @@ from hospital.auth import initialize_auth,login,logout,AccessDenied,bootstrap_ad
 from hospital.access import StaffHospital,PAGES
 from hospital.accounts import accept_invitation
 from hospital.ui_public import introduction
+from hospital.ui_theme import sidebar_identity, page_description, status_badge
 from hospital.ui_experience import registration,duplicate_panel,reassignment,dashboard
 from hospital.ui_accounts import password_form,staff_management,invite_panel,patient_portal,evaluation_backup
 
@@ -104,9 +105,7 @@ if staff['must_change']:
         st.rerun()
     st.stop()
 process_events(hospital.path)
-st.sidebar.title('MedAgent Sync')
-st.sidebar.caption('Patient & agent workspace')
-st.sidebar.caption(staff['username']+' · '+staff['role'].replace('_',' '))
+sidebar_identity(staff['username'], staff['role'])
 if st.sidebar.button('Sign out'):
     logout(hospital.path,st.session_state.staff_token)
     st.session_state.clear()
@@ -118,8 +117,9 @@ if staff['role']=='patient':
     st.stop()
 page=st.sidebar.radio('Workspace',PAGES[staff['role']])
 hospital.authorize_page(page)
-st.sidebar.info('Hospital workflow prototype · synthetic data only')
+st.sidebar.caption('Demo prototype. Not for real clinical use.')
 st.title(page)
+page_description(page)
 if st.session_state.get('feedback'):
     st.success(st.session_state.pop('feedback'))
 
@@ -256,6 +256,7 @@ elif page=='Appointments':
         st.info('No appointments yet.')
     for a in bookings:
         with st.expander(f"{a['name']} · {a['service_date']} · {a['status']}"):
+            status_badge(a['status'])
             st.caption(f"{a['appointment_id']} · {a['specialty']} · {a['doctor'] or 'Awaiting allocation'}")
             st.caption('Billing: '+a['billing_status']+' · Email reminder: '+('opted in' if a['reminder_opt_in'] else 'off'))
             st.caption('Planned attendance: '+('patient confirmed' if a['attendance_confirmed'] else 'not confirmed'))
@@ -304,6 +305,7 @@ elif page=='Care workspace':
         st.info('No active visits. Check in a confirmed appointment to begin.')
     for v in visits:
         with st.expander(f"{v['name']} · {v['state']} · urgency {v['urgency']}",expanded=True):
+            status_badge(v['state'])
             st.caption(v['visit_id']+' · '+str(v['specialty'])+' · '+str(v['doctor']))
             st.text(v['notes'] or 'No clinical notes recorded.')
             readings=hospital.records('SELECT systolic,temperature,heart_rate,spo2,respiratory_rate,flagged,recorded_at FROM vitals WHERE visit_id=? ORDER BY vital_id DESC',(v['visit_id'],))

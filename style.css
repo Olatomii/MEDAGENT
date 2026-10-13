@@ -1,75 +1,99 @@
-/* MedAgent: quiet surfaces, clear hierarchy, native accessible controls. */
-:root { --ink: #172e3a; --muted: #526776; --teal: #087e83; --line: #dce5e9; --surface: #fff; --canvas: #f5f8fa; }
-.stApp { background: var(--canvas); color: var(--ink); }
-[data-testid="stHeader"] { background: var(--canvas); }
-[data-testid="stMainBlockContainer"] { max-width: 1280px; padding: 2.5rem 3rem 4rem; }
-html, body, button, input, textarea { font-family: "Segoe UI", system-ui, sans-serif; }
-h1 { font-size: 2rem !important; font-weight: 700 !important; letter-spacing: -.04em; padding-bottom: .25rem !important; }
-h2 { font-size: 1.25rem !important; font-weight: 650 !important; }
-h3 { font-size: 1.125rem !important; }
-[data-testid="stCaptionContainer"] { color: var(--muted); opacity: 1 !important; }
-hr { border-color: var(--line); margin: 1rem 0; }
-[data-testid="stSidebar"] { background: var(--surface); border-right: 1px solid var(--line); }
-[data-testid="stSidebarContent"] { padding-top: 1rem; }
-.brand { display: flex; align-items: center; gap: .75rem; margin: 0 0 2.5rem; }
-.brand-mark { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 8px; background: var(--teal); color: white; font-size: 1.5rem; }
-.brand strong { font-size: 1.125rem; letter-spacing: -.025em; }
-.brand small { display: block; font-size: .75rem; color: var(--muted); margin-top: .125rem; }
-.nav-label, .page-kicker { color: var(--muted); font-size: .6875rem; font-weight: 650; letter-spacing: .1em; }
-.page-kicker { display: flex; justify-content: space-between; align-items: center; gap: .75rem; }
-.page-kicker span { letter-spacing: 0; font-size: .8125rem; font-weight: 400; }
-.sidebar-note { color: var(--muted); font-size: .75rem; line-height: 1.6; }
-[data-testid="stSidebar"] [role="radiogroup"] { gap: .25rem; }
-[data-testid="stSidebar"] [role="radiogroup"] > label { margin: 0; padding: .75rem; border-radius: 6px; border: 1px solid transparent; width: 100%; }
-[data-testid="stSidebar"] [role="radiogroup"] > label:hover { background: #f1f7f7; }
-[data-testid="stSidebar"] [role="radiogroup"] > label:has(input:checked) { background: #e8f4f3; border-color: #c8e4e1; }
-[data-testid="stSidebar"] [role="radiogroup"] > label:has(input:checked) p { color: #08666a; font-weight: 650; }
-[data-testid="stMetric"] { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.25rem; }
-[data-testid="stMetricLabel"] p { font-size: .8125rem; color: var(--muted); }
-[data-testid="stMetricValue"] { font-size: 1.875rem; font-weight: 650; color: var(--ink); }
-.section-label { display: flex; align-items: center; gap: .75rem; color: var(--teal); font-size: .75rem; font-weight: 700; padding: .5rem 0; }
-.section-label span { font-size: .9375rem; color: var(--ink); font-weight: 600; }
-[data-testid="stWidgetLabel"] p { font-size: .8125rem; font-weight: 600; }
-[data-baseweb="input"], [data-baseweb="select"] > div, [data-baseweb="textarea"] { background: var(--surface); border-color: #cbd7de; border-radius: 6px; }
-[data-testid="stButton"] button { border-radius: 6px; min-height: 2.75rem; font-weight: 600; box-shadow: none; }
-[data-testid="stButton"] button[kind="primary"] { background: var(--teal); border-color: var(--teal); color: white; }
-[data-testid="stButton"] button[kind="primary"]:hover { background: #06676c; border-color: #06676c; }
-[data-testid="stButton"] button:disabled { opacity: .45; }
-button:focus-visible, input:focus-visible, [role="radiogroup"] label:focus-within { outline: 3px solid #087e83 !important; outline-offset: 3px; }
-[data-testid="stExpander"] { background: var(--surface); border-radius: 8px; border-color: var(--line); }
-[data-testid="stExpander"] summary { padding: 1rem; font-weight: 600; }
-[data-testid="stAlert"] { border-radius: 6px; }
-[data-testid="stDataFrame"] { border-radius: 6px; overflow: hidden; }
-.dynamic-island { background: #e8f4f3; color: #125753; border: 1px solid #badbd6; border-left: 4px solid var(--teal); padding: 1rem; border-radius: 6px; font-size: .875rem; overflow-wrap: anywhere; }
-@media (max-width: 768px) {
-    [data-testid="stMainBlockContainer"] { padding: 2rem 1rem; }
-    h1 { font-size: 1.625rem !important; }
-    .page-kicker { flex-direction: column; align-items: flex-start; gap: .25rem; }
-    [data-testid="stMetric"] { padding: .75rem 1rem; }
-    [data-testid="stMetricValue"] { font-size: 1.5rem; }
+/* MEDAGENT: a calm, consistent product workspace with native controls. */
+:root { --ink:#193449; --muted:#546b78; --teal:#087c78; --line:#d5e2e4; --surface:#fff; --canvas:#f4f8f8; --mint:#e7f3ef; }
+.stApp { background:var(--canvas); color:var(--ink); }
+[data-testid="stHeader"] { background:var(--canvas); }
+[data-testid="stMainBlockContainer"] { max-width:1280px; padding:2.75rem 3rem 4rem; }
+html, body, button, input, textarea { font-family:"Segoe UI",system-ui,sans-serif; }
+h1 { color:var(--ink); font-size:2.35rem !important; font-weight:700 !important; letter-spacing:-.045em; line-height:1.15 !important; padding-bottom:.5rem !important; }
+h2 { color:var(--ink); font-size:1.5rem !important; font-weight:650 !important; letter-spacing:-.025em; }
+h3 { color:var(--ink); font-size:1.2rem !important; font-weight:650 !important; }
+[data-testid="stCaptionContainer"] { color:var(--muted); opacity:1 !important; line-height:1.6; }
+hr { border-color:var(--line); margin:1.4rem 0; }
+/* Public entry: a primary patient route and two supporting routes. */
+.st-key-public-brand { border-bottom:1px solid var(--line); padding-bottom:1rem; margin-bottom:.7rem; }
+.st-key-public-brand h2 { font-size:1.25rem !important; letter-spacing:.025em; padding-bottom:0 !important; }
+.st-key-public-brand [data-testid="stCaptionContainer"] p { margin:0; }
+.st-key-welcome { padding:1.5rem 0 1.25rem; }
+.st-key-welcome [data-testid="stHorizontalBlock"] { align-items:center; }
+.welcome-copy h1 { font-size:clamp(2.7rem,4.2vw,3.6rem) !important; max-width:10ch; margin:0 0 1rem; line-height:1.06 !important; }
+.welcome-copy p { font-size:1.15rem; line-height:1.7; max-width:32ch; color:var(--muted); margin:1rem 0 1.4rem; }
+.st-key-welcome [data-testid="stButton"] { max-width:300px; }
+.welcome-image { display:block; width:100%; aspect-ratio:3/2; object-fit:cover; border-radius:20px; }
+.st-key-entry-options { padding:1.4rem 1.75rem; border:1px solid var(--line); background:var(--surface); border-radius:16px; margin-bottom:1rem; }
+.st-key-entry-options h3 { padding-top:0 !important; }
+.st-key-entry-options p { color:var(--muted); }
+.st-key-entry-options button p { color:var(--ink); }
+.st-key-portal-navigation { max-width:760px; margin-bottom:.5rem; }
+/* Sign-in should feel like a form, not span an entire monitor. */
+[data-testid="stForm"] { border:1px solid var(--line); background:var(--surface); border-radius:14px; padding:1.5rem; }
+.st-key-signin, [data-testid="stForm"]:has(input[aria-label="Username"]) { max-width:600px; }
+/* Keep existing radio navigation keyboard-accessible and visibly selected. */
+[data-testid="stSidebar"] { background:#193449; border-right:0; color:#edf5f6; }
+[data-testid="stSidebarContent"] { padding-top:1rem; }
+.workspace-brand { padding:.5rem 0 1.5rem; }
+.workspace-brand strong { display:block; color:#fff; font-size:1.25rem; letter-spacing:.03em; }
+.workspace-brand span { display:block; color:#c2d7df; font-size:.8rem; margin-top:.25rem; }
+.account-summary { padding:1rem; margin-bottom:.5rem; background:#25485b; border-radius:12px; overflow-wrap:anywhere; }
+.account-summary strong { display:block; color:#fff; }
+.account-summary span { display:block; color:#d1e3e8; font-size:.8rem; margin-top:.2rem; }
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+[data-testid="stSidebar"] [data-testid="stWidgetLabel"] { color:#d1e3e8; }
+[data-testid="stSidebar"] [role="radiogroup"] { gap:.3rem; }
+[data-testid="stSidebar"] [role="radiogroup"] label { color:#edf5f6; margin:0; padding:.7rem .8rem; border-radius:9px; border:1px solid transparent; width:100%; }
+[data-testid="stSidebar"] [role="radiogroup"] label:hover { background:#25485b; }
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) { background:#d8f0e9; border-color:#d8f0e9; }
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) p { color:#154b47; font-weight:650; }
+[data-testid="stSidebar"] [data-testid="stExpander"] { color:var(--ink); }
+[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stWidgetLabel"],
+[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stCaptionContainer"] { color:var(--muted); }
+[data-testid="stMetric"] { background:var(--surface); border:1px solid var(--line); border-top:3px solid var(--teal); border-radius:12px; padding:1.1rem 1.4rem; }
+[data-testid="stMetricLabel"] p { font-size:.875rem; color:var(--muted); }
+[data-testid="stMetricValue"] { font-size:2.1rem; font-weight:650; color:var(--ink); }
+[data-testid="stWidgetLabel"] p { font-size:.875rem; font-weight:600; }
+[data-baseweb="input"], [data-baseweb="select"] > div, [data-baseweb="textarea"] { background:var(--surface); border-color:#718590; border-radius:8px; }
+[data-testid="stTextInputRootElement"], [data-testid="stNumberInputContainer"], [data-testid="stTextAreaRootElement"],
+[data-testid="stTextInput"] [data-baseweb="input"], [data-testid="stNumberInput"] [data-baseweb="input"],
+[data-testid="stDateInput"] [data-baseweb="input"], [data-testid="stTimeInput"] [data-baseweb="select"] > div,
+[data-testid="stSelectbox"] [data-baseweb="select"] > div, [data-testid="stTextArea"] [data-baseweb="textarea"] { border:1px solid #718590 !important; }
+[data-testid="stButton"] button, [data-testid="stFormSubmitButton"] button { border-radius:8px; min-height:2.8rem; font-weight:600; box-shadow:none; transition:background-color .15s,border-color .15s; }
+button[kind="primary"], button[kind="primaryFormSubmit"] { background:var(--teal); border-color:var(--teal); color:white; }
+button[kind="primary"]:hover, button[kind="primaryFormSubmit"]:hover { background:#066661; border-color:#066661; color:white; }
+button:focus-visible, input:focus-visible, [role="radiogroup"] label:focus-within { outline:3px solid #159d95 !important; outline-offset:3px; }
+[data-testid="stExpander"] { background:var(--surface); border-radius:12px; border-color:var(--line); }
+[data-testid="stExpander"] summary { padding:1rem; font-weight:600; }
+[data-testid="stAlert"] { border-radius:10px; }
+[data-testid="stDataFrame"] { border-radius:10px; overflow:hidden; }
+.status-badge { display:inline-block; padding:.3rem .7rem; border-radius:6px; background:#eaf0f4; color:#294e68; font-size:.8rem; font-weight:650; }
+.status-badge.success { background:#e1f2e9; color:#216044; }
+.status-badge.waiting { background:#fff1d3; color:#785314; }
+.status-badge.attention { background:#fae6e2; color:#913f33; }
+.empty-state { background:var(--surface); border:1px dashed #aabec3; border-radius:12px; padding:1.75rem; margin:.3rem 0 1rem; }
+.empty-state strong { display:block; color:var(--ink); font-size:1.1rem; }
+.empty-state p { color:var(--muted); margin:.5rem 0 0; max-width:65ch; }
+/* The journey selector is the timeline: one accessible control, no duplicate steps. */
+.st-key-demo-stages [data-testid="stElementContainer"] { width:100%; }
+.st-key-demo-stages [role="radiogroup"] { display:flex; gap:.75rem; width:100%; }
+.st-key-demo-stages [role="radiogroup"] > div { flex:1; }
+.st-key-demo-stages [role="radiogroup"] label { flex:1; padding:.85rem; border-top:3px solid var(--line); border-radius:0 0 8px 8px; }
+.st-key-demo-stages [role="radiogroup"] label:has(input:checked) { border-color:var(--teal); background:var(--mint); color:#08655f; }
+.dynamic-island { background:var(--mint); color:#125753; border:1px solid #badbd6; border-left:4px solid var(--teal); padding:1rem; border-radius:8px; overflow-wrap:anywhere; }
+@media (max-width:900px) { [data-testid="stMainBlockContainer"] { padding:2rem 1.5rem 3rem; } .welcome-copy h1 { font-size:2.8rem !important; } }
+@media (max-width:640px) {
+ [data-testid="stHorizontalBlock"] { flex-direction:column; gap:1rem; }
+ [data-testid="stColumn"] { width:100% !important; flex:1 1 100% !important; min-width:0 !important; }
+ [data-testid="stMainBlockContainer"] { padding:1.75rem 1rem 3rem; }
+ h1 { font-size:1.9rem !important; }
+ .welcome-copy h1 { font-size:2.8rem !important; max-width:12ch; }
+ .welcome-copy p { margin:.65rem 0 1rem; }
+ .welcome-image { max-height:250px; }
+ .st-key-welcome { padding:.7rem 0; }
+ .st-key-entry-options { padding:1.2rem; }
+ .st-key-welcome [data-testid="stButton"] { max-width:none; }
+ [data-testid="stButton"] button, [data-testid="stFormSubmitButton"] button { width:100%; min-height:44px; }
+ [data-testid="stExpander"] summary { padding:.8rem; }
+ [data-testid="stForm"] { padding:1rem; }
+ [data-testid="stMarkdownContainer"] p, [data-testid="stCaptionContainer"] { overflow-wrap:anywhere; }
+ .st-key-demo-stages [role="radiogroup"] { flex-wrap:wrap; } .st-key-demo-stages [role="radiogroup"] > div { flex:1 1 40%; }
+ input, textarea { font-size:16px !important; }
 }
-/* Phone layouts: stack forms, preserve labels, and keep long IDs readable. */
-@media (max-width: 640px) {
-    [data-testid="stHorizontalBlock"] { flex-direction: column; gap: .75rem; }
-    [data-testid="stColumn"] { width: 100% !important; flex: 1 1 100% !important; min-width: 0 !important; }
-    [data-testid="stFormSubmitButton"] button,
-    [data-testid="stButton"] button { width: 100%; min-height: 44px; }
-    [data-testid="stMainBlockContainer"] { padding: 1.5rem .75rem 3rem; }
-    [data-testid="stExpander"] summary { padding: .75rem; }
-    [data-testid="stMarkdownContainer"] p,
-    [data-testid="stCaptionContainer"] { overflow-wrap: anywhere; }
-    input, textarea { font-size: 16px !important; }
-}
-
-/* Keep control boundaries visible on both white forms and the page canvas. */
-[data-testid="stTextInputRootElement"],
-[data-testid="stNumberInputContainer"],
-[data-testid="stTextAreaRootElement"],
-[data-testid="stTextInput"] [data-baseweb="input"],
-[data-testid="stNumberInput"] [data-baseweb="input"],
-[data-testid="stDateInput"] [data-baseweb="input"],
-[data-testid="stTimeInput"] [data-baseweb="select"] > div,
-[data-testid="stSelectbox"] [data-baseweb="select"] > div,
-[data-testid="stTextArea"] [data-baseweb="textarea"] {
-    border: 1px solid #718590 !important;
-}
+@media (prefers-reduced-motion:reduce) { *, *::before, *::after { transition:none !important; animation:none !important; scroll-behavior:auto !important; } }
