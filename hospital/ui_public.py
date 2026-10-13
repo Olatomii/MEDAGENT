@@ -2,7 +2,6 @@
 from pathlib import Path
 import base64
 import streamlit as st
-from .ui_theme import status_badge
 
 
 @st.cache_data(show_spinner=False)
@@ -17,8 +16,12 @@ def choose_route(label):
 def introduction():
     route = st.session_state.get('public_route')
     with st.container(key='public-brand'):
-        st.header('MEDAGENT')
-        st.caption('Hospital Appointment & Patient Management')
+        brand, home = st.columns([5, 1])
+        with brand:
+            st.header('MEDAGENT')
+            st.caption('Hospital Appointment & Patient Management')
+        if route is not None:
+            home.button('Home', key='entry_home', on_click=choose_route, args=(None,))
     if route is None:
         with st.container(key='welcome'):
             left, right = st.columns([1.05, 1], gap='large')
@@ -59,7 +62,8 @@ def introduction():
         st.divider()
         st.subheader('A patient’s journey')
         st.caption('Fictional sample · Read-only walkthrough')
-        stage = st.radio('Explore a stage', ('Appointment', 'Arrival', 'Consultation', 'Follow-up'), horizontal=True)
+        with st.container(key='demo-stages'):
+            stage = st.radio('Explore a stage', ('Appointment', 'Arrival', 'Consultation', 'Follow-up'), horizontal=True)
         examples = {
             'Appointment': ('Appointment confirmed', 'Alex Morgan · General Practice',
                             'A place is reserved in the doctor’s session. When a session is full, a new request joins the waiting list.'),
@@ -71,12 +75,7 @@ def introduction():
                           'The completed visit remains in the patient’s history. A future appointment can be requested when needed.'),
         }
         status, detail, explanation = examples[stage]
-        stages = ('Appointment', 'Arrival', 'Consultation', 'Follow-up')
-        st.markdown('<ol class="journey">'+''.join(
-            '<li'+(' aria-current="step"' if item == stage else '')+'>'+item+'</li>'
-            for item in stages)+'</ol>', unsafe_allow_html=True)
         with st.container(border=True):
-            status_badge(status)
             st.subheader(status)
             st.write(detail)
             st.write(explanation)

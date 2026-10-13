@@ -70,9 +70,10 @@ button:focus-visible, input:focus-visible, [role="radiogroup"] label:focus-withi
 .empty-state { background:var(--surface); border:1px dashed #aabec3; border-radius:12px; padding:1.75rem; margin:.3rem 0 1rem; }
 .empty-state strong { display:block; color:var(--ink); font-size:1.1rem; }
 .empty-state p { color:var(--muted); margin:.5rem 0 0; max-width:65ch; }
-.journey { display:flex; padding:0; list-style:none; gap:.4rem; margin:.5rem 0 1.4rem; }
-.journey li { flex:1; padding:.8rem .7rem; border-top:3px solid var(--line); color:var(--muted); font-size:.875rem; }
-.journey li[aria-current="step"] { border-color:var(--teal); color:#08655f; background:var(--mint); font-weight:650; border-radius:0 0 8px 8px; }
+/* The journey selector is the timeline: one accessible control, no duplicate steps. */
+.st-key-demo-stages [role="radiogroup"] { display:flex; gap:.75rem; }
+.st-key-demo-stages [role="radiogroup"] > label { flex:1; padding:.85rem; border-top:3px solid var(--line); border-radius:0 0 8px 8px; }
+.st-key-demo-stages [role="radiogroup"] > label:has(input:checked) { border-color:var(--teal); background:var(--mint); color:#08655f; }
 .dynamic-island { background:var(--mint); color:#125753; border:1px solid #badbd6; border-left:4px solid var(--teal); padding:1rem; border-radius:8px; overflow-wrap:anywhere; }
 @media (max-width:900px) { [data-testid="stMainBlockContainer"] { padding:2rem 1.5rem 3rem; } .welcome-copy h1 { font-size:2.8rem !important; } }
 @media (max-width:640px) {
@@ -90,7 +91,7 @@ button:focus-visible, input:focus-visible, [role="radiogroup"] label:focus-withi
  [data-testid="stExpander"] summary { padding:.8rem; }
  [data-testid="stForm"] { padding:1rem; }
  [data-testid="stMarkdownContainer"] p, [data-testid="stCaptionContainer"] { overflow-wrap:anywhere; }
- .journey { flex-wrap:wrap; } .journey li { flex:1 1 40%; }
+ .st-key-demo-stages [role="radiogroup"] { flex-wrap:wrap; } .st-key-demo-stages [role="radiogroup"] > label { flex:1 1 40%; }
  input, textarea { font-size:16px !important; }
 }
 @media (prefers-reduced-motion:reduce) { *, *::before, *::after { transition:none !important; animation:none !important; scroll-behavior:auto !important; } }
