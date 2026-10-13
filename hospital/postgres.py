@@ -32,6 +32,9 @@ def row_factory(cursor):
 @lru_cache(maxsize=4)
 def pool(url):
     return ConnectionPool(url, min_size=0, max_size=5, timeout=20,
+                          # Hosted databases can close idle sockets. Validate on
+                          # checkout, before any application transaction starts.
+                          check=ConnectionPool.check_connection,
                           kwargs={'row_factory': row_factory, 'connect_timeout': 10},
                           # Never emit a connection URL from this module.
                           name='medagent', open=True)
