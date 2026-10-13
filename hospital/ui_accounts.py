@@ -74,6 +74,7 @@ def invite_panel(path,token,patient_id):
 
 
 def patient_portal(path,token,today):
+    from .ui_theme import status_badge, empty_state
     portal=PatientPortal(path,token)
     profile=portal.profile()
     st.title('My appointments')
@@ -96,9 +97,10 @@ def patient_portal(path,token,today):
         else: st.info('No appointment updates yet.')
     appointments=portal.appointments()
     if not appointments:
-        st.info('You have no appointments yet.')
+        empty_state('Your next visit starts here', 'You have no appointments yet. Open “Request a routine appointment” above to choose a date and department.')
     for a in appointments:
         with st.expander(f"{a['service_date']} · {a['specialty']} · {a['status']}",expanded=a['status'] in ('CONFIRMED','WAITLISTED')):
+            status_badge(a['status'])
             st.caption('Doctor: '+str(a['doctor'] or 'Awaiting allocation')+' · Billing: '+a['billing_status'])
             key=a['appointment_id']+str(a['revision'])
             if a['status']=='CONFIRMED' and a['service_date']>=today:

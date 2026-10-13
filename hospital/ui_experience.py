@@ -2,6 +2,7 @@
 import streamlit as st
 from . import experience
 from .ui_accounts import action
+from .ui_theme import empty_state
 
 
 def registration(path):
@@ -58,18 +59,21 @@ def reassignment(path,token,a):
 
 def dashboard(path,token):
     data=experience.operational_snapshot(path,token)
-    st.caption('Today · '+data['date']+' · updates when you refresh this page')
-    if st.button('Refresh dashboard'): st.rerun()
+    date_column, refresh_column = st.columns([3, 1])
+    date_column.markdown('**'+data['date']+'** · Today’s operations')
+    if refresh_column.button('Refresh dashboard', use_container_width=True): st.rerun()
     counts={r['status']:r['count'] for r in data['bookings']}
     columns=st.columns(3)
-    columns[0].metric('Booked today',sum(counts.values()))
+    columns[0].metric('Appointments today',sum(counts.values()))
     columns[1].metric('Checked in / completed',counts.get('CHECKED_IN',0)+counts.get('FULFILLED',0))
     columns[2].metric('Waiting for a place',counts.get('WAITLISTED',0))
-    st.caption('Counts are appointment statuses for today; cancelled/missed records remain included in the total. Checked in / completed counts arrivals, not attendance promises.')
-    if data['bookings']: st.dataframe(data['bookings'],hide_index=True,use_container_width=True)
+    with st.expander('Appointment breakdown'):
+        st.caption('Counts update when you refresh. Cancelled/missed records remain included in the total. Checked in / completed counts arrivals, not attendance promises.')
+        if data['bookings']: st.dataframe(data['bookings'],hide_index=True,use_container_width=True)
+        else: st.write('No appointments recorded for today.')
     st.subheader('Doctor workload')
     if data['workload']: st.dataframe(data['workload'],hide_index=True,use_container_width=True)
-    else: st.info('No doctor sessions configured for today.')
+    else: empty_state('A clear schedule', 'No doctor sessions are configured for today. Staff with scheduling access can add availability in Doctor sessions.')
     if data['waits']:
         import pandas as pd
         st.subheader('Time in current care state')
