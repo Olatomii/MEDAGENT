@@ -39,10 +39,10 @@ hr { border-color:var(--line); margin:1.4rem 0; }
 [data-testid="stSidebar"] [data-testid="stCaptionContainer"],
 [data-testid="stSidebar"] [data-testid="stWidgetLabel"] { color:#d1e3e8; }
 [data-testid="stSidebar"] [role="radiogroup"] { gap:.3rem; }
-[data-testid="stSidebar"] [role="radiogroup"] > label { color:#edf5f6; margin:0; padding:.7rem .8rem; border-radius:9px; border:1px solid transparent; width:100%; }
-[data-testid="stSidebar"] [role="radiogroup"] > label:hover { background:#25485b; }
-[data-testid="stSidebar"] [role="radiogroup"] > label:has(input:checked) { background:#d8f0e9; border-color:#d8f0e9; }
-[data-testid="stSidebar"] [role="radiogroup"] > label:has(input:checked) p { color:#154b47; font-weight:650; }
+[data-testid="stSidebar"] [role="radiogroup"] label { color:#edf5f6; margin:0; padding:.7rem .8rem; border-radius:9px; border:1px solid transparent; width:100%; }
+[data-testid="stSidebar"] [role="radiogroup"] label:hover { background:#25485b; }
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) { background:#d8f0e9; border-color:#d8f0e9; }
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) p { color:#154b47; font-weight:650; }
 [data-testid="stSidebar"] [data-testid="stExpander"] { color:var(--ink); }
 [data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stWidgetLabel"],
 [data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stCaptionContainer"] { color:var(--muted); }
@@ -71,9 +71,11 @@ button:focus-visible, input:focus-visible, [role="radiogroup"] label:focus-withi
 .empty-state strong { display:block; color:var(--ink); font-size:1.1rem; }
 .empty-state p { color:var(--muted); margin:.5rem 0 0; max-width:65ch; }
 /* The journey selector is the timeline: one accessible control, no duplicate steps. */
-.st-key-demo-stages [role="radiogroup"] { display:flex; gap:.75rem; }
-.st-key-demo-stages [role="radiogroup"] > label { flex:1; padding:.85rem; border-top:3px solid var(--line); border-radius:0 0 8px 8px; }
-.st-key-demo-stages [role="radiogroup"] > label:has(input:checked) { border-color:var(--teal); background:var(--mint); color:#08655f; }
+.st-key-demo-stages [data-testid="stElementContainer"] { width:100%; }
+.st-key-demo-stages [role="radiogroup"] { display:flex; gap:.75rem; width:100%; }
+.st-key-demo-stages [role="radiogroup"] > div { flex:1; }
+.st-key-demo-stages [role="radiogroup"] label { flex:1; padding:.85rem; border-top:3px solid var(--line); border-radius:0 0 8px 8px; }
+.st-key-demo-stages [role="radiogroup"] label:has(input:checked) { border-color:var(--teal); background:var(--mint); color:#08655f; }
 .dynamic-island { background:var(--mint); color:#125753; border:1px solid #badbd6; border-left:4px solid var(--teal); padding:1rem; border-radius:8px; overflow-wrap:anywhere; }
 @media (max-width:900px) { [data-testid="stMainBlockContainer"] { padding:2rem 1.5rem 3rem; } .welcome-copy h1 { font-size:2.8rem !important; } }
 @media (max-width:640px) {
@@ -91,7 +93,7 @@ button:focus-visible, input:focus-visible, [role="radiogroup"] label:focus-withi
  [data-testid="stExpander"] summary { padding:.8rem; }
  [data-testid="stForm"] { padding:1rem; }
  [data-testid="stMarkdownContainer"] p, [data-testid="stCaptionContainer"] { overflow-wrap:anywhere; }
- .st-key-demo-stages [role="radiogroup"] { flex-wrap:wrap; } .st-key-demo-stages [role="radiogroup"] > label { flex:1 1 40%; }
+ .st-key-demo-stages [role="radiogroup"] { flex-wrap:wrap; } .st-key-demo-stages [role="radiogroup"] > div { flex:1 1 40%; }
  input, textarea { font-size:16px !important; }
 }
 @media (prefers-reduced-motion:reduce) { *, *::before, *::after { transition:none !important; animation:none !important; scroll-behavior:auto !important; } }
