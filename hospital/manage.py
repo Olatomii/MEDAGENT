@@ -1,6 +1,7 @@
 """Maintenance commands; never reads production configuration implicitly."""
 import argparse
 import time
+import os
 import getpass
 import json
 from .service import Hospital
@@ -70,8 +71,8 @@ def main():
             parser.error('Worker interval must be at least 10 seconds.')
         try:
             while True:
-                process_events(hospital.path)
-                dispatch(hospital.path)
+                from .maintenance import run_once
+                run_once(hospital.path,os.getenv("MEDAGENT_BACKUP_DIR"))
                 time.sleep(args.interval)
         except KeyboardInterrupt:
             return

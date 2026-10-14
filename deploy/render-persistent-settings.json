@@ -1,0 +1,20 @@
+{
+  "status": "proposed-not-applied",
+  "serviceId": "srv-daitth5g1s2s738o4ho0",
+  "branch": "fix/medagent-bugs",
+  "plan": "starter",
+  "numInstances": 1,
+  "disk": {"name": "medagent-data", "mountPath": "/var/data", "sizeGB": 1},
+  "startCommand": "python -m hospital.runtime",
+  "healthCheckPath": "/_stcore/health",
+  "environment": {
+    "MEDAGENT_APP_VERSION": "v2",
+    "MEDAGENT_DATA_DIR": "/var/data",
+    "MEDAGENT_V2_DB_PATH": "/var/data/medagent_v2.db",
+    "MEDAGENT_BACKUP_DIR": "/var/data/backups",
+    "MEDAGENT_REQUIRE_MOUNT": "true",
+    "MEDAGENT_V2_REMINDERS_ENABLED": "false",
+    "MEDAGENT_V2_EMAIL_VERIFICATION_ENABLED": "false",
+    "REMINDER_TIMEZONE": "Africa/Lagos"
+  }
+}
