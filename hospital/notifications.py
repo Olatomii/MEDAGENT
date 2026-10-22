@@ -9,7 +9,7 @@ from .agents import emit
 
 def configured():
     return bool(os.getenv('MEDAGENT_V2_REMINDERS_ENABLED')=='true' and
-                os.getenv('RESEND_API_KEY') and os.getenv('REMINDER_FROM_EMAIL'))
+                reminders.provider_configured())
 
 
 def suggested_email(email):
