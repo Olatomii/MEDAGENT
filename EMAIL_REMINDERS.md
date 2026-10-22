@@ -1,59 +1,68 @@
 # Appointment email reminders
 
-Front Desk now offers email reminders for future routine bookings. The patient must
-opt in and supply a valid email address. Existing bookings remain opted out.
-Waitlist entries retain the preference but do not trigger emails. Completed,
-absent, admitted, diverted, emergency, and already-progressed visits are excluded.
+The v2 Reminder Agent sends date-only reminders for tomorrow's confirmed routine
+appointments, at or after 09:00 Africa/Lagos. Patients must opt in and provide a
+valid email. Emergency, cancelled, completed, unpaid and waitlisted appointments
+are excluded. No fixed consultation duration is promised.
 
-The Reminder Agent checks every minute while the Streamlit process is alive,
-starting with the first page load. At or after 09:00 Africa/Lagos it sends one
-date-only reminder for tomorrow's confirmed appointment. The System Target Date
-does not advance this clock. Rollover does not create a new reminder commitment:
-the original reminder date must still match the appointment date. A missed
-previous-day window is not sent late on the appointment day.
+## Brevo and GitHub Actions setup
 
-## Activation
+Delivery is disabled by default. No paid worker is required. Create a Brevo account,
+verify a sender and create an API key with transactional sending access. Use the
+HTTPS API key, not an SMTP key. Complete any account review Brevo requests.
 
-Sending is disabled by default. The implementation uses Resend's HTTPS API.
-Configure these environment variables privately in the hosting dashboard:
+Under GitHub repository Settings → Secrets and variables → Actions, add:
 
-- `RESEND_API_KEY`: a Resend sending API key; never commit this value.
-- `REMINDER_FROM_EMAIL`: a sender address authorized by your Resend account/domain.
-- `REMINDERS_ENABLED`: `true` only when ready for delivery.
-- `REMINDER_TIMEZONE`: optional, defaults to `Africa/Lagos`.
-- `MEDAGENT_DB_PATH`: persistent SQLite path for reliable scheduled use.
+| Type | Name | Value |
+| --- | --- | --- |
+| Secret | MEDAGENT_DATABASE_URL | Production Neon PostgreSQL connection string |
+| Secret | BREVO_API_KEY | Brevo API key |
+| Variable | REMINDER_FROM_EMAIL | Verified sender email address |
+| Variable | MEDAGENT_REMINDERS_ENABLED | Leave false until ready, then true |
 
-Free Render web services sleep and their local filesystem is ephemeral. A thread
-cannot send while the service sleeps, and deleted database history cannot prevent
-duplicates. For dependable unattended delivery use an always-running instance
-with a persistent disk and one instance, or migrate shared state to a persistent
-database with a separately scheduled worker. No paid resources were provisioned.
-For demonstration only, open the app during the reminder window to start checks.
+Never commit credentials or paste them into chat. The workflow runs hourly at
+minute 17 and can also be run manually from Actions → Appointment reminders.
+It connects directly to the persistent database, so Render may remain asleep.
+It requires the existing v2 schema; it does not create or reset patient records.
+GitHub scheduled runs can be delayed or missed and public inactive repositories
+may have schedules disabled. This is a portfolio service, not a clinical alert system.
+Check current provider quotas and GitHub billing settings before enabling it.
+
+For the app's optional patient email verification, configure Render privately with
+EMAIL_PROVIDER=brevo, BREVO_API_KEY, REMINDER_FROM_EMAIL, and
+MEDAGENT_V2_EMAIL_VERIFICATION_ENABLED=true. Enable this only after the sender test.
+The scheduled worker does not require Render's reminder flag to be enabled.
+
+Before activation, review opted-in upcoming appointments. Use only synthetic demo
+data and authorized recipients. Test delivery to your own address first and check
+Brevo's transactional logs and your inbox. Provider acceptance alone does not prove
+inbox delivery. No live messages are sent by the test suite.
 
 ## Delivery and duplicate protection
 
-A unique appointment/date claim is committed before sending, with a matching
-Resend idempotency key. Repeated checks, browser reruns, and concurrent workers
-do not send the same claimed appointment/date again while its record persists.
-`ACCEPTED` means the provider accepted the request, not inbox delivery. Provider
-errors become `REVIEW_REQUIRED`; process interruption may leave `SENDING`.
-These are deliberately not retried automatically, because a timeout can happen
-after acceptance. Verify delivery in the provider dashboard before recovery.
-Do not delete the claim merely to retry. A crash can therefore cause a missed
-reminder rather than a duplicate. A cancellation committed after a send was
-claimed can race with delivery; no guarantee is made about recalling that email.
+A unique appointment/date/revision claim is committed before sending. Repeated or
+concurrent passes cannot send the same claimed reminder again while its record
+persists. Rescheduling creates a new revision. Brevo uses this database protection;
+Resend also receives an idempotency key. ACCEPTED means provider acceptance.
+Errors become REVIEW_REQUIRED and interruption can leave SENDING. Neither is
+retried automatically because a timeout can occur after the provider accepts mail.
+Check the provider dashboard before recovery; do not simply delete claims.
+A cancellation after a claim can race with delivery. A crash can cause a missed
+reminder rather than duplicate mail. Back up the persistent database.
 
-System Telemetry shows status counts without email addresses. Reset deletes
-reminder history along with patient records. Existing public prototype access
-controls are unchanged; this is not a production patient-notification service.
+## Existing Resend / legacy deployments
+
+EMAIL_PROVIDER defaults to resend for compatibility. Resend requires RESEND_API_KEY
+and REMINDER_FROM_EMAIL. The v2 opt-in activation flag is
+MEDAGENT_V2_REMINDERS_ENABLED=true. Legacy app.py reminders use REMINDERS_ENABLED
+and its SQLite worker; do not point the new v2 job at the legacy schema.
+REMINDER_TIMEZONE defaults to Africa/Lagos for either provider.
 
 ## Verification
 
-Run `python -m pytest -q`. Tests use temporary databases and fake senders. No real
-patient emails are sent. Live delivery still requires provider configuration and
-a controlled end-to-end test to an authorized recipient.
+Run `python -m pytest -q`. Provider tests mock HTTPS; workflow tests exercise
+claiming, concurrent dispatch, consent, rescheduling and ambiguous failures.
 
-Provider references:
-- https://resend.com/docs/api-reference/emails/send-email
-- https://resend.com/docs/dashboard/emails/idempotency-keys
-- https://render.com/docs/free
+References:
+- https://developers.brevo.com/reference/send-transac-email
+- https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule

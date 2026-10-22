@@ -104,7 +104,7 @@ class PatientPortal:
         if not reminders.valid_email(profile['email']):
             raise ValueError('Ask the front desk to record a valid email first.')
         if sender is None:
-            if os.getenv('MEDAGENT_V2_EMAIL_VERIFICATION_ENABLED')!='true' or not os.getenv('RESEND_API_KEY') or not os.getenv('REMINDER_FROM_EMAIL'):
+            if os.getenv('MEDAGENT_V2_EMAIL_VERIFICATION_ENABLED')!='true' or not reminders.provider_configured():
                 raise ValueError('Email verification delivery has not been activated.')
             sender=lambda to,body,key:reminders.send_email(to,body,key,subject='MedAgent email verification')
         code=secrets.token_urlsafe(24)

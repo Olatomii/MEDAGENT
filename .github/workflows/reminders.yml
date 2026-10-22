@@ -1,0 +1,35 @@
+name: Appointment reminders
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: appointment-reminders
+  cancel-in-progress: false
+
+jobs:
+  send:
+    if: vars.MEDAGENT_REMINDERS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Check due reminders
+        env:
+          MEDAGENT_DATABASE_URL: ${{ secrets.MEDAGENT_DATABASE_URL }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          REMINDER_FROM_EMAIL: ${{ vars.REMINDER_FROM_EMAIL }}
+          EMAIL_PROVIDER: brevo
+          MEDAGENT_V2_REMINDERS_ENABLED: 'true'
+          REMINDER_TIMEZONE: Africa/Lagos
+        run: python -m hospital.reminder_job

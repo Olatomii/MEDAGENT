@@ -22,7 +22,14 @@ def valid_email(value):
 
 def configured():
     return bool(os.getenv('REMINDERS_ENABLED') == 'true' and
-                os.getenv('RESEND_API_KEY') and os.getenv('REMINDER_FROM_EMAIL'))
+                provider_configured())
+
+
+def provider_configured():
+    provider = os.getenv('EMAIL_PROVIDER', 'resend').lower()
+    key_name = {'brevo': 'BREVO_API_KEY', 'resend': 'RESEND_API_KEY'}.get(provider)
+    return bool(key_name and os.getenv(key_name) and
+                valid_email(os.getenv('REMINDER_FROM_EMAIL', '')))
 
 
 def migrate(conn):
@@ -51,15 +58,28 @@ def message(date, specialty):
 
 
 def send_email(recipient, body, key, subject='Appointment reminder'):
-    payload = json.dumps({'from': os.environ['REMINDER_FROM_EMAIL'],
-                          'to': [recipient], 'subject': subject,
-                          'text': body}).encode()
-    request = urllib.request.Request('https://api.resend.com/emails', data=payload,
-        headers={'Authorization': 'Bearer ' + os.environ['RESEND_API_KEY'],
-                 'Content-Type': 'application/json', 'Idempotency-Key': key}, method='POST')
+    provider = os.getenv('EMAIL_PROVIDER', 'resend').lower()
+    if not provider_configured() or not valid_email(recipient):
+        raise ValueError('Email provider or recipient is not configured correctly')
+    if provider == 'brevo':
+        url = 'https://api.brevo.com/v3/smtp/email'
+        data = {'sender': {'email': os.environ['REMINDER_FROM_EMAIL'], 'name': 'MEDAGENT'},
+                'to': [{'email': recipient}], 'subject': subject, 'textContent': body}
+        headers = {'api-key': os.environ['BREVO_API_KEY']}
+        receipt_field = 'messageId'
+    else:
+        url = 'https://api.resend.com/emails'
+        data = {'from': os.environ['REMINDER_FROM_EMAIL'], 'to': [recipient],
+                'subject': subject, 'text': body}
+        headers = {'Authorization': 'Bearer ' + os.environ['RESEND_API_KEY'],
+                   'Idempotency-Key': key}
+        receipt_field = 'id'
+    headers.update({'Content-Type': 'application/json', 'Accept': 'application/json'})
+    request = urllib.request.Request(url, data=json.dumps(data).encode(),
+                                     headers=headers, method='POST')
     with urllib.request.urlopen(request, timeout=15) as response:
-        provider_id = json.load(response).get('id')
-        if not provider_id:
+        provider_id = json.load(response).get(receipt_field)
+        if not isinstance(provider_id, str) or not provider_id:
             raise ValueError('Missing provider receipt')
         return provider_id
 
