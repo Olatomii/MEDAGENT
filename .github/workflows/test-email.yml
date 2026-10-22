@@ -1,0 +1,73 @@
+name: Test email delivery
+
+on:
+  workflow_dispatch:
+    inputs:
+      recipient:
+        description: Your own email address for one test message
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-email-delivery
+  cancel-in-progress: false
+
+jobs:
+  test-email:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Check configuration and send one test
+        env:
+          MEDAGENT_DATABASE_URL: ${{ secrets.MEDAGENT_DATABASE_URL }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          REMINDER_FROM_EMAIL: ${{ vars.REMINDER_FROM_EMAIL }}
+          MEDAGENT_TEST_RECIPIENT: ${{ inputs.recipient }}
+          EMAIL_PROVIDER: brevo
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import uuid
+          import logging
+          import reminders
+          from hospital.database import connection, is_postgres
+
+          # Avoid printing connection exceptions or provider response bodies.
+          logging.getLogger('psycopg.pool').setLevel(logging.CRITICAL)
+          recipient = os.environ.get('MEDAGENT_TEST_RECIPIENT', '').strip()
+          database = os.environ.get('MEDAGENT_DATABASE_URL', '').strip()
+          if not reminders.valid_email(recipient):
+              sys.exit('Enter a valid recipient email address.')
+          if not reminders.provider_configured():
+              sys.exit('Check BREVO_API_KEY and REMINDER_FROM_EMAIL configuration.')
+          if not is_postgres(database):
+              sys.exit('MEDAGENT_DATABASE_URL must be the existing PostgreSQL connection secret.')
+          try:
+              with connection(database) as conn:
+                  conn.execute('SELECT reminder_key FROM notifications LIMIT 0')
+          except Exception:
+              sys.exit('Database check failed. Check the database secret and existing v2 schema.')
+          print('Database and reminder schema check passed. No patient records were changed.')
+          try:
+              reminders.send_email(
+                  recipient,
+                  'This is a MEDAGENT email delivery test.\n\n'
+                  'It is not an appointment confirmation or medical advice. '
+                  'No appointment reminders have been enabled by this test.\n\n'
+                  'MEDAGENT — portfolio demonstration',
+                  'test-' + uuid.uuid4().hex,
+                  subject='MEDAGENT email delivery test')
+          except Exception:
+              sys.exit('Email attempt needs review. Check Brevo transactional logs before retrying.')
+          print('Brevo accepted the test email. Check your inbox and spam folder to confirm delivery.')
+          PY
